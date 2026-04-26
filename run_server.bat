@@ -16,7 +16,7 @@ if not exist "logs" mkdir "logs"
 :: ================================================================
 set "PYTHON="
 
-:: Check .env override first
+:: Check .env override first (even before .env check, just scan the file)
 if exist ".env" (
     for /f "usebackq tokens=1,* delims==" %%a in (".env") do (
         if "%%a"=="PYTHON_EXE" set "PYTHON=%%b"
@@ -24,21 +24,29 @@ if exist ".env" (
 )
 
 if not defined PYTHON (
-    for %%p in (
-        ".venv\Scripts\python.exe"
-        "%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
-        "%LOCALAPPDATA%\Programs\Python\Python311\python.exe"
-        "%LOCALAPPDATA%\Programs\Python\Python310\python.exe"
-        "C:\Python312\python.exe"
-        "C:\Python311\python.exe"
-        "C:\Python310\python.exe"
-    ) do (
-        if not defined PYTHON (
-            if exist %%p set "PYTHON=%%~p"
-        )
-    )
+    if exist ".venv\Scripts\python.exe"                                              set "PYTHON=%~dp0.venv\Scripts\python.exe"
 )
-
+if not defined PYTHON (
+    if exist "C:\Users\Sasha\AppData\Local\Programs\Python\Python312\python.exe"    set "PYTHON=C:\Users\Sasha\AppData\Local\Programs\Python\Python312\python.exe"
+)
+if not defined PYTHON (
+    if exist "C:\Users\Sasha\AppData\Local\Programs\Python\Python311\python.exe"    set "PYTHON=C:\Users\Sasha\AppData\Local\Programs\Python\Python311\python.exe"
+)
+if not defined PYTHON (
+    if exist "C:\Users\Sasha\AppData\Local\Programs\Python\Python310\python.exe"    set "PYTHON=C:\Users\Sasha\AppData\Local\Programs\Python\Python310\python.exe"
+)
+if not defined PYTHON (
+    if exist "%LOCALAPPDATA%\Programs\Python\Python312\python.exe"                  set "PYTHON=%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
+)
+if not defined PYTHON (
+    if exist "C:\Python312\python.exe"   set "PYTHON=C:\Python312\python.exe"
+)
+if not defined PYTHON (
+    if exist "C:\Python311\python.exe"   set "PYTHON=C:\Python311\python.exe"
+)
+if not defined PYTHON (
+    if exist "C:\Python310\python.exe"   set "PYTHON=C:\Python310\python.exe"
+)
 if not defined PYTHON (
     where python >nul 2>&1
     if not errorlevel 1 set "PYTHON=python"
@@ -46,8 +54,7 @@ if not defined PYTHON (
 
 if not defined PYTHON (
     echo [ERROR] Python не найден!
-    echo         Установи Python 3.10+ с https://python.org
-    echo         или добавь в .env строку: PYTHON_EXE=C:\путь\к\python.exe
+    echo         Добавь в .env строку: PYTHON_EXE=C:\путь\к\python.exe
     pause
     exit /b 1
 )
