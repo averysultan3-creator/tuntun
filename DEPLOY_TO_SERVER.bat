@@ -20,7 +20,7 @@ setlocal EnableDelayedExpansion
 :: Обновления: git push с локального ПК — сервер сам тянет.
 :: ============================================================
 
-set "REPO_URL=https://averysultan3-creator@github.com/averysultan3-creator/tuntun.git"
+set "REPO_URL=https://github.com/averysultan3-creator/tuntun.git"
 set "INSTALL_DIR=%~dp0TUNTUN"
 
 echo.
