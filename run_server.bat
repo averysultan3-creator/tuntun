@@ -92,6 +92,15 @@ if not exist ".env" (
 )
 
 :: ================================================================
+:: 3b. PATCH OLD MODEL NAMES IN .ENV
+:: ================================================================
+powershell -NoProfile -Command ^
+    "(Get-Content '.env') ^
+    -replace 'gpt-4o-mini','gpt-5.4-mini' ^
+    -replace '^(OPENAI_MODEL(?:_CHAT|_REASONING|_VISION)?)=gpt-4o$','\$1=gpt-5.4' ^
+    | Set-Content '.env'"
+
+:: ================================================================
 :: 4. PIP INSTALL
 :: ================================================================
 echo.
