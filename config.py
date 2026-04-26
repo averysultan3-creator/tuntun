@@ -23,7 +23,7 @@ WHISPER_MODEL: str = os.getenv("OPENAI_TRANSCRIBE_MODEL", "whisper-1")
 #   CHAT      → ROUTER
 
 # ROUTER — cheap, fast: intent classification only (always has a value)
-MODEL_ROUTER: str      = os.getenv("OPENAI_MODEL_ROUTER") or "gpt-4.1-mini"
+MODEL_ROUTER: str      = os.getenv("OPENAI_MODEL_ROUTER") or "gpt-5.4-mini"
 
 # CHAT — smart: conversations, advice, explanations (empty = fallback to ROUTER)
 MODEL_CHAT: str        = os.getenv("OPENAI_MODEL_CHAT", "")
