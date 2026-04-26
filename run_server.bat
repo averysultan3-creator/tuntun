@@ -1,73 +1,94 @@
 @echo off
 chcp 65001 >nul
 setlocal EnableDelayedExpansion
-title TUNTUN — Server
+title TUNTUN — Install ^& Run
 
 echo ============================================================
-echo   TUNTUN — One-Click Deploy ^& Run
+echo   TUNTUN — Fresh Install ^& Run
 echo ============================================================
 echo.
 
-cd /d "%~dp0"
-if not exist "logs" mkdir "logs"
-
 :: ================================================================
-:: 1. PYTHON — ищем везде через PowerShell
+:: 1. PYTHON
 :: ================================================================
 set "PYTHON="
 
-:: Сначала проверяем PYTHON_EXE в .env
-if exist ".env" (
-    for /f "usebackq tokens=1,* delims==" %%a in (".env") do (
-        if "%%a"=="PYTHON_EXE" set "PYTHON=%%b"
-    )
-)
+for /f "usebackq delims=" %%p in (`powershell -NoProfile -Command "$paths = @('C:\Python312\python.exe','C:\Python311\python.exe','C:\Python310\python.exe') + (Get-ChildItem 'C:\Users\*\AppData\Local\Programs\Python\*\python.exe' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName); $f = $paths | Where-Object { Test-Path $_ } | Select-Object -First 1; if ($f) { $f }" 2^>nul`) do set "PYTHON=%%p"
 
-:: Ищем python.exe во всех профилях и стандартных местах
-if not defined PYTHON (
-    for /f "usebackq delims=" %%p in (`powershell -NoProfile -Command "$paths = @('C:\Python312\python.exe','C:\Python311\python.exe','C:\Python310\python.exe') + (Get-ChildItem 'C:\Users\*\AppData\Local\Programs\Python\*\python.exe' -ErrorAction SilentlyContinue ^| Select-Object -ExpandProperty FullName); $found = $paths ^| Where-Object { Test-Path $_ } ^| Select-Object -First 1; if ($found) { $found } else { '' }" 2^>nul`) do (
-        if not "%%p"=="" set "PYTHON=%%p"
-    )
-)
-
-:: Последний вариант — python из PATH
 if not defined PYTHON (
     where python >nul 2>&1
     if not errorlevel 1 set "PYTHON=python"
 )
 
 if not defined PYTHON (
-    echo.
-    echo [ERROR] Python не найден! Установи с https://python.org
-    echo         Или добавь в .env: PYTHON_EXE=C:\путь\к\python.exe
-    pause
-    exit /b 1
+    echo [ERROR] Python не найден!
+    echo         Установи Python 3.10+ с https://python.org
+    echo         При установке отметь "Add Python to PATH"
+    pause & exit /b 1
 )
 echo [OK] Python: %PYTHON%
 
 :: ================================================================
-:: 2. .ENV CHECK
+:: 2. GIT CLONE / PULL
+:: ================================================================
+set "REPO=https://github.com/averysultan3-creator/tuntun.git"
+set "DIR=C:\Users\Sasha\Documents\Bots\TUNTUN"
+
+where git >nul 2>&1
+if errorlevel 1 (
+    echo [ERROR] git не найден! Установи с https://git-scm.com
+    pause & exit /b 1
+)
+
+if not exist "%DIR%\.git" (
+    echo.
+    echo [GIT] Клонируем репозиторий...
+    git clone %REPO% "%DIR%"
+    if errorlevel 1 (
+        echo [ERROR] git clone не удался!
+        pause & exit /b 1
+    )
+)
+
+cd /d "%DIR%"
+if not exist "logs" mkdir "logs"
+
+echo.
+echo [GIT] Обновляем код...
+git config pull.rebase false >nul 2>&1
+git pull origin main
+
+:: ================================================================
+:: 3. .ENV — создаём если нет
 :: ================================================================
 if not exist ".env" (
     echo.
-    echo [СТОП] Файл .env не найден в папке: %~dp0
-    echo        Скопируй .env из D:\AackREF\TUNTUN\.env сюда.
-    pause
-    exit /b 1
-)
-echo [OK] .env найден
-
-:: ================================================================
-:: 3. GIT PULL
-:: ================================================================
-echo.
-echo [GIT] Обновляем код...
-where git >nul 2>&1
-if not errorlevel 1 (
-    git config pull.rebase false >nul 2>&1
-    git pull origin main
-) else (
-    echo [WARN] git не найден — пропускаем pull
+    echo ============================================================
+    echo   Первый запуск — нужно ввести два ключа.
+    echo   Это делается ОДИН РАЗ. Потом .env сохранится на сервере.
+    echo ============================================================
+    echo.
+    set /p "TG=  TELEGRAM_BOT_TOKEN: "
+    set /p "OAI=  OPENAI_API_KEY:      "
+    echo.
+    (
+        echo TELEGRAM_BOT_TOKEN=!TG!
+        echo OPENAI_API_KEY=!OAI!
+        echo OPENAI_MODEL=gpt-4o-mini
+        echo OPENAI_MODEL_ROUTER=gpt-4o-mini
+        echo OPENAI_MODEL_CHAT=gpt-4o
+        echo OPENAI_MODEL_REASONING=gpt-4o
+        echo OPENAI_MODEL_VISION=gpt-4o
+        echo OPENAI_TRANSCRIBE_MODEL=whisper-1
+        echo OPENAI_MODEL_EMBEDDINGS=text-embedding-3-small
+        echo DATABASE_PATH=tuntun.db
+        echo TIMEZONE=Europe/Warsaw
+        echo ADMIN_TELEGRAM_IDS=
+        echo GIT_BRANCH=main
+        echo AUTO_UPDATE_ENABLED=true
+        echo AUTO_UPDATE_INTERVAL_MINUTES=2
+    ) > ".env"
+    echo [OK] .env создан
 )
 
 :: ================================================================
@@ -87,42 +108,38 @@ echo [DB] Инициализация БД...
 "%PYTHON%" main.py --init-db
 if errorlevel 1 (
     echo [ERROR] --init-db упал!
-    pause
-    exit /b 1
+    pause & exit /b 1
 )
 
 :: ================================================================
-:: 6. RESTART BOT
+:: 6. START BOT
 :: ================================================================
 echo.
-echo [BOT] Перезапуск...
+echo [BOT] Запускаем...
 "%PYTHON%" run_background.py stop >nul 2>&1
 timeout /t 2 /nobreak >nul
 "%PYTHON%" run_background.py start
 if errorlevel 1 (
     echo [ERROR] Бот не запустился!
-    pause
-    exit /b 1
+    pause & exit /b 1
 )
-echo [OK] Бот запущен
+echo [OK] Бот запущен!
 
 :: ================================================================
 :: 7. LIVE LOGS
 :: ================================================================
 echo.
 echo ============================================================
-echo   Логи в реальном времени. Ctrl+C = выйти (бот работает).
+echo   Всё работает. Логи ниже.
+echo   Ctrl+C = выйти из просмотра (бот продолжит работать)
 echo ============================================================
 echo.
 
 :waitlog
-if not exist "logs\runtime.log" (
-    timeout /t 1 /nobreak >nul
-    goto waitlog
-)
+if not exist "logs\runtime.log" ( timeout /t 1 /nobreak >nul & goto waitlog )
 
 powershell -NoProfile -Command "Get-Content 'logs\runtime.log' -Wait -Tail 50"
 
 echo.
-echo Бот работает в фоне. Для остановки: stop.bat
+echo Бот работает в фоне. Для остановки запусти stop.bat
 pause
