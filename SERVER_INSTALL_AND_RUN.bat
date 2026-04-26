@@ -126,10 +126,12 @@ if not exist "requirements.txt" (
     exit /b 1
 )
 
-"%PYTHON%" -m pip install --upgrade pip --quiet
-"%PYTHON%" -m pip install -r requirements.txt --quiet
+"%PYTHON%" -m pip install --upgrade pip
+"%PYTHON%" -m pip install -r requirements.txt
 if errorlevel 1 (
-    echo [ERROR] pip install failed. Check your internet connection and requirements.txt.
+    echo.
+    echo [ERROR] pip install failed!
+    echo         Проверь интернет и посмотри ошибки выше.
     pause
     exit /b 1
 )

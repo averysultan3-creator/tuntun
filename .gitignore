@@ -4,6 +4,9 @@
 .env.server
 .env.production
 
+# ── Configured deployer (contains API keys — keep private) ─────────────────
+DEPLOY_CONFIGURED.bat
+
 # ── Database & data files ──────────────────────────────────────────────────
 *.db
 *.db-journal
