@@ -127,6 +127,7 @@ async def _process_text(message: Message, text: str, state: FSMContext,
         actions = result.get("actions", [])
         ai_reply = result.get("reply", "")
         chat_response_needed = result.get("chat_response_needed", False)
+        chat_question = result.get("chat_question", None)
         is_data_query = result.get("is_data_query", False)
         needs_retrieval = result.get("needs_retrieval", False)
         data_query_type = result.get("data_query_type", None)
@@ -138,6 +139,9 @@ async def _process_text(message: Message, text: str, state: FSMContext,
         reply_style = result.get("reply_style", None)
         needs_reasoning = result.get("needs_reasoning", False)
         refers_to_previous = result.get("refers_to_previous", False)
+        # Overall confidence: min across actions, or 0.9 for pure chat
+        _action_confs = [float(a.get("confidence", 0.9)) for a in actions if a.get("intent") not in ("chat", "unknown")]
+        confidence = min(_action_confs) if _action_confs else 0.9
 
         # Auto-save settings if AI detected a change in conversational style
         if settings_update_needed or reply_style:
@@ -161,6 +165,8 @@ async def _process_text(message: Message, text: str, state: FSMContext,
             format_request=format_request,
             needs_reasoning=needs_reasoning,
             refers_to_previous=refers_to_previous,
+            chat_question=chat_question,
+            confidence=confidence,
         )
 
         # Save conversation state after each message exchange

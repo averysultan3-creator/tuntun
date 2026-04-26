@@ -65,24 +65,40 @@ def get_model(purpose: str) -> str:
 # These intents produce a complete template response from the handler.
 # No model call is needed — backend handles it fully.
 BACKEND_ONLY_INTENTS: frozenset = frozenset({
-    "expense_add",          # "Готово. Записал расход: еда — 40 PLN."
+    # Finance
+    "expense_add",          # "Записал расход: еда — 40 PLN."
+    "expense_stats",        # formatted sum/table from DB
+    # Tasks
     "task_create",          # "✅ Задача создана: ..."
     "task_complete",        # "✅ Задача выполнена: ..."
     "task_list",            # list output from DB
+    "task_update",          # "✅ Задача обновлена" (explicit params)
+    "task_delete",          # "✅ Задача удалена" (only when exact ID found)
+    # Reminders
     "reminder_create",      # "⏰ Напоминание поставлено на ..."
     "reminder_list",        # list output from DB
+    "reminder_cancel",      # "✅ Напоминание отменено" (exact ID case)
+    # Export / Backup
     "export_excel",         # "✅ Экспорт готов → файл"
     "export_txt",           # "✅ Экспорт готов → файл"
     "backup_create",        # "✅ Backup создан"
+    # Sections & records
     "section_record_add",   # "✅ Запись добавлена в [раздел]"
+    # Study
     "study_add_record",     # "✅ Запись по учёбе добавлена"
+    "study_add_subject",    # "✅ Предмет добавлен"
+    "study_list",           # list output from DB
+    # Memory & settings
     "memory_save",          # "✅ Запомнил: ..."
-    "idea_save",            # "💡 Идея сохранена: ..."
-    "expense_stats",        # formatted sum/table from DB
-    "project_create",       # "✅ Проект создан: ..."
     "setting_save",         # "✅ Настройка сохранена"
+    # Projects & ideas
+    "project_create",       # "✅ Проект создан: ..."
+    "project_list",         # list output from DB
+    "idea_save",            # "💡 Идея сохранена: ..."
+    "idea_list",            # list output from DB
+    # Schedule & regime
     "schedule_view",        # list output from DB
-    "reminder_cancel",      # "✅ Напоминание отменено" (exact ID case)
+    "regime_sleep_calc",    # calculation result (deterministic)
 })
 
 # These intents always need the REASONING model.

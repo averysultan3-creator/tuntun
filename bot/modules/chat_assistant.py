@@ -65,7 +65,7 @@ def _get_client() -> AsyncOpenAI:
     return _chat_client
 
 
-async def _get_recent_conversation(user_id: int, limit: int = 10) -> list[dict]:
+async def _get_recent_conversation(user_id: int, limit: int = 5) -> list[dict]:
     """Fetch recent message log as OpenAI messages format."""
     try:
         rows = await db.message_logs_recent(user_id, limit=limit)
@@ -141,11 +141,19 @@ async def handle_chat_response(
         system_parts.append("\n--- Активный контекст ---\n" + context_state)
 
     # ── 2. User data context ──────────────────────────────────────────────
+    # Full retrieval (query-driven) only when truly needed to avoid wasted DB reads.
+    # For simple chat, base context (tasks, reminders) is enough.
+    _needs_full_retrieval = (
+        needs_retrieval
+        or is_data_query
+        or refers_to_previous
+        or needs_reasoning
+    )
     context_parts: list[str] = []
     try:
         base_ctx = await get_user_context(
             user_id,
-            query=question if needs_retrieval else None,
+            query=question if _needs_full_retrieval else None,
         )
         if base_ctx:
             context_parts.append(base_ctx)
@@ -176,7 +184,9 @@ async def handle_chat_response(
     system = "\n".join(system_parts)
 
     # ── 3. Conversation history ───────────────────────────────────────────
-    history = await _get_recent_conversation(user_id, limit=10)
+    # Deeper context for reasoning tasks, otherwise keep short (3 turns).
+    _hist_limit = 5 if (needs_reasoning or refers_to_previous) else 3
+    history = await _get_recent_conversation(user_id, limit=_hist_limit)
 
     messages = [{"role": "system", "content": system}]
     messages.extend(history)

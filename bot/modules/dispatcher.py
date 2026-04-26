@@ -5,6 +5,66 @@ import config
 from bot.ai.model_router import should_use_backend_only
 from bot.modules import tasks, study, schedule, reminders, memory, projects, dynamic, regime, user_settings, ideas, onboarding
 
+# ── Patterns that indicate a bad/empty router reply ────────────────────────────
+_BAD_REPLY_PATTERNS = (
+    "чем могу помочь",
+    "нет записей",
+    "нет данных",
+    "по этой теме пока нет",
+    "не смог найти",
+    "не нашёл данных",
+)
+
+
+def _should_call_chat_response(
+    ai_reply: str,
+    needs_reasoning: bool,
+    safety_level: str,
+    confidence: float,
+    is_data_query: bool,
+    has_action_results: bool,
+    has_chat_question: bool,
+) -> bool:
+    """Decide if we need to call handle_chat_response().
+
+    Returns True only when the router's ai_reply is insufficient or we need
+    deeper intelligence. Prevents unnecessary second model calls.
+
+    Cases that ALWAYS call handle_chat_response:
+      - needs_reasoning=True (plan day, complex analytics)
+      - safety_level confirm/dangerous
+      - confidence < 0.75 (ambiguous message)
+      - is_data_query with no backend answer yet
+      - actions executed + separate chat_question from user
+      - ai_reply is empty or boilerplate
+
+    Otherwise: use router's ai_reply directly (no second model call).
+    """
+    # Complex reasoning always needs full model
+    if needs_reasoning:
+        return True
+    # Dangerous/confirm actions always need full context
+    if safety_level in ("confirm", "dangerous"):
+        return True
+    # Low confidence = ambiguous → need reasoning
+    if confidence < 0.75:
+        return True
+    # Data query where backend produced no answer → real query needed
+    if is_data_query and not has_action_results:
+        return True
+    # Actions executed + user also asked a separate question → answer it
+    if has_action_results and has_chat_question:
+        return True
+    # Check if router's reply is good enough to use directly
+    reply = (ai_reply or "").strip()
+    if len(reply) < 40:
+        return True
+    reply_lower = reply.lower()
+    if any(p in reply_lower for p in _BAD_REPLY_PATTERNS):
+        return True
+    # Router gave a good, substantive reply — use it directly
+    return False
+
 
 async def _safe_delete(intent: str, params: dict, user_id: int) -> str | None:
     """Check if a delete/cancel would affect multiple objects.
@@ -134,7 +194,9 @@ async def dispatch_actions(actions: list, user_id: int, ai_reply: str,
                            contextual_followup: bool = False,
                            format_request: str = None,
                            needs_reasoning: bool = False,
-                           refers_to_previous: bool = False) -> str:
+                           refers_to_previous: bool = False,
+                           chat_question: str = None,
+                           confidence: float = 0.9) -> str:
     """Execute all actions with sufficient confidence and combine responses.
 
     Safe Actions rules:
@@ -216,51 +278,71 @@ async def dispatch_actions(actions: list, user_id: int, ai_reply: str,
     results.extend(low_confidence_questions)
 
     # ── Determine the chat part of the response ───────────────────────────
-    # ai_reply is the reply field from the classify() JSON — a real answer
-    # for general questions and data-based answer for queries.
-    # We only call handle_chat_response() when ai_reply is empty or boilerplate.
-
     chat_answer = ai_reply or ""
 
-    # ── Backend-only check: skip model call for simple actions ─────────────
-    # Derive intent list and minimum confidence from the executed actions
+    # ── Backend-only check ─────────────────────────────────────────────────
     _all_intents = [a.get("intent", "") for a in actions if a.get("intent") not in ("chat", "unknown")]
-    _min_conf = min((float(a.get("confidence", 0.8)) for a in actions), default=0.9) if actions else 0.9
+    _min_conf = min((float(a.get("confidence", 0.8)) for a in actions), default=confidence) if actions else confidence
     _backend_only = bool(results) and should_use_backend_only(_all_intents, _min_conf)
     if _backend_only:
         logging.debug(
-            "model_router | purpose=backend_only  intents=%s  confidence=%.2f  reason=simple action, skip model call",
+            "model_router | purpose=backend_only intents=%s conf=%.2f -> skip model call",
             _all_intents, _min_conf,
         )
 
-    if chat_response_needed and not _backend_only:
-        # Always use smart CHAT model (gpt-5.4) — never use the router mini's reply as the final answer.
-        # Router reply is only a routing hint; real intelligence comes from handle_chat_response.
-        need_fallback = True
-        if need_fallback:
-            try:
-                from bot.modules.chat_assistant import handle_chat_response
-                chat_answer = await handle_chat_response(
-                    user_id=user_id,
-                    question=message_text or chat_answer or "Помоги",
-                    is_data_query=is_data_query,
-                    needs_retrieval=needs_retrieval,
-                    data_query_type=data_query_type,
-                    needs_reasoning=needs_reasoning,
-                    refers_to_previous=refers_to_previous,
-                    intents=_all_intents,
-                )
-            except Exception as e:
-                logging.warning(f"dispatch_actions: handle_chat_response failed: {e}")
-                chat_answer = chat_answer or "Чем могу помочь?"
+    # ── Decide whether to call handle_chat_response ───────────────────────
+    # If backend_only and NO separate chat_question: skip entirely.
+    # If backend_only but there IS a chat_question alongside actions: answer it.
+    _has_chat_question = bool(chat_question and chat_question.strip())
+    _need_chat = False
+
+    if chat_response_needed:
+        if _backend_only and not _has_chat_question:
+            # Pure backend action, user asked no question → skip model call
+            _need_chat = False
+        elif _backend_only and _has_chat_question:
+            # Mixed: action done + user asked a question → answer with CHAT (not reasoning)
+            _need_chat = True
+            needs_reasoning = False  # Force cheap CHAT model for follow-up
+        else:
+            _need_chat = _should_call_chat_response(
+                ai_reply=ai_reply,
+                needs_reasoning=needs_reasoning,
+                safety_level=safety_level,
+                confidence=_min_conf,
+                is_data_query=is_data_query,
+                has_action_results=bool(results),
+                has_chat_question=_has_chat_question,
+            )
+
+    if _need_chat:
+        try:
+            from bot.modules.chat_assistant import handle_chat_response
+            _question = chat_question or message_text or chat_answer or "Помоги"
+            chat_answer = await handle_chat_response(
+                user_id=user_id,
+                question=_question,
+                is_data_query=is_data_query,
+                needs_retrieval=needs_retrieval,
+                data_query_type=data_query_type,
+                needs_reasoning=needs_reasoning,
+                refers_to_previous=refers_to_previous,
+                confidence=_min_conf,
+                safety_level=safety_level,
+                intents=_all_intents,
+            )
+        except Exception as e:
+            logging.warning("dispatch_actions: handle_chat_response failed: %s", e)
+            chat_answer = chat_answer or "Чем могу помочь?"
+    elif not _need_chat and chat_response_needed and not results:
+        # No actions, no model call needed — use router's reply as-is
+        pass  # chat_answer already = ai_reply
 
     if results:
-        # If AI also wants to add a chat comment — append it (only when not backend-only)
-        if chat_response_needed and chat_answer and not _backend_only:
+        if _need_chat and chat_answer:
             results.append(chat_answer)
         return "\n\n".join(results)
 
-    # No action results
     if chat_response_needed:
         return chat_answer or "Чем могу помочь?"
 

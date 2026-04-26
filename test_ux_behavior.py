@@ -125,6 +125,8 @@ async def _dispatch(ai_json_str: str, msg_text: str) -> str:
             needs_retrieval=result.get("needs_retrieval", False),
             data_query_type=result.get("data_query_type"),
             message_text=msg_text,
+            chat_question=result.get("chat_question"),
+            confidence=0.9,
         )
 
 

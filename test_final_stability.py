@@ -203,21 +203,26 @@ except Exception as e:
 
 
 # ─────────────────────────────────────────────────────────────
-# Sync: dispatcher always uses CHAT
+# Sync: dispatcher smart routing
 # ─────────────────────────────────────────────────────────────
-print("\n=== 13. Dispatcher Always Uses CHAT ===")
+print("\n=== 13. Dispatcher Smart Routing ===")
 try:
     content = Path("bot/modules/dispatcher.py").read_text(encoding="utf-8")
-    assert "need_fallback = True" in content, \
-        "dispatcher.py should always set need_fallback=True"
-    ok("dispatcher.py always calls handle_chat_response for chat")
 
-    assert "not chat_answer.strip()" not in content, \
-        "old need_fallback condition still present"
-    ok("dispatcher.py: no old fallback condition on chat_answer")
+    assert "_should_call_chat_response" in content, \
+        "dispatcher.py missing _should_call_chat_response function"
+    ok("dispatcher.py has _should_call_chat_response smart routing")
+
+    assert "_backend_only" in content, \
+        "dispatcher.py missing _backend_only check"
+    ok("dispatcher.py has _backend_only check")
+
+    assert "_has_chat_question" in content, \
+        "dispatcher.py missing _has_chat_question path"
+    ok("dispatcher.py handles mixed action + chat_question")
 
 except Exception as e:
-    fail("dispatcher_always_chat", str(e))
+    fail("dispatcher_smart_routing", str(e))
 
 
 # ─────────────────────────────────────────────────────────────

@@ -13,25 +13,41 @@ ALLOWED_USER_IDS: list = [
 TIMEZONE: str = os.getenv("TIMEZONE", "Europe/Warsaw")
 DB_PATH: str = os.getenv("DATABASE_PATH") or os.getenv("DB_PATH", "tuntun.db")
 OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-WHISPER_MODEL: str = os.getenv("OPENAI_TRANSCRIBE_MODEL", "whisper-1")
+
+# Transcription: OPENAI_MODEL_TRANSCRIBE preferred, OPENAI_TRANSCRIBE_MODEL legacy fallback
+WHISPER_MODEL: str = (
+    os.getenv("OPENAI_MODEL_TRANSCRIBE")
+    or os.getenv("OPENAI_TRANSCRIBE_MODEL")
+    or "whisper-1"
+)
 
 # Multi-model routing
 # IMPORTANT: CHAT / REASONING / VISION are stored as raw env values (may be empty).
 # bot/ai/model_router.py applies the fallback chain:
-#   REASONING → CHAT → ROUTER
+#   REASONING → CHAT → OPENAI_MODEL → ROUTER
 #   VISION    → CHAT → ROUTER
-#   CHAT      → ROUTER
+#   CHAT      → OPENAI_MODEL → ROUTER
 
 # ROUTER — cheap, fast: intent classification only (always has a value)
-MODEL_ROUTER: str      = os.getenv("OPENAI_MODEL_ROUTER") or "gpt-5.4-mini"
+MODEL_ROUTER: str      = os.getenv("OPENAI_MODEL_ROUTER") or OPENAI_MODEL or "gpt-4o-mini"
 
-# CHAT — smart: conversations, advice, explanations (empty = fallback to ROUTER)
-MODEL_CHAT: str        = os.getenv("OPENAI_MODEL_CHAT", "")
+# CHAT — smart: conversations, advice, explanations
+# Fallback: OPENAI_MODEL_CHAT -> OPENAI_MODEL -> MODEL_ROUTER
+MODEL_CHAT: str        = (
+    os.getenv("OPENAI_MODEL_CHAT")
+    or OPENAI_MODEL
+    or MODEL_ROUTER
+)
 
-# REASONING — strongest: planning, analytics, ambiguous/destructive (empty = fallback chain)
-MODEL_REASONING: str   = os.getenv("OPENAI_MODEL_REASONING", "")
+# REASONING — strongest: planning, analytics, ambiguous/destructive
+# Fallback: OPENAI_MODEL_REASONING -> MODEL_CHAT -> MODEL_ROUTER
+MODEL_REASONING: str   = (
+    os.getenv("OPENAI_MODEL_REASONING")
+    or MODEL_CHAT
+    or MODEL_ROUTER
+)
 
-# VISION — multimodal: photos, receipts (empty = Vision disabled, fallback to CHAT)
+# VISION — multimodal: photos, receipts (empty = Vision disabled)
 MODEL_VISION: str      = os.getenv("OPENAI_MODEL_VISION", "")
 
 # EMBEDDINGS — reserved for V2 semantic search (not used yet)

@@ -13,6 +13,44 @@ from bot.ai.model_router import get_model, choose_model
 _client = AsyncOpenAI(api_key=config.OPENAI_API_KEY)
 _WEEKDAYS_RU = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
 
+# ──────────────────────────────────────────────────────────────
+# Lightweight context for the router (no heavy DB queries)
+# ──────────────────────────────────────────────────────────────
+
+async def _get_lightweight_router_context(user_id: int) -> str:
+    """Build minimal context for intent classification.
+
+    Only reads conversation_state — fast, cheap, no retrieval.
+    Full user data is loaded in chat_assistant.py when actually answering.
+    """
+    try:
+        from bot.db.database import db
+        state = await db.conversation_state_get(user_id)
+        if not state:
+            return ""
+        parts = []
+        if state.get("active_topic"):
+            parts.append(f"active_topic: {state['active_topic']}")
+        if state.get("active_section"):
+            parts.append(f"active_section: {state['active_section']}")
+        if state.get("active_object_type") and state.get("active_object_id"):
+            parts.append(
+                f"active_object: {state['active_object_type']} #{state['active_object_id']}"
+            )
+        if state.get("active_date"):
+            parts.append(f"active_date: {state['active_date']}")
+        if state.get("last_discussed_task_ids"):
+            parts.append(f"last_task_ids: {state['last_discussed_task_ids']}")
+        if state.get("last_discussed_reminder_ids"):
+            parts.append(f"last_reminder_ids: {state['last_discussed_reminder_ids']}")
+        if state.get("last_plan_json"):
+            parts.append("last_plan: exists")
+        if state.get("last_table_json"):
+            parts.append("last_table: exists")
+        return ", ".join(parts) if parts else ""
+    except Exception:
+        return ""
+
 _FALLBACK = {
     "actions": [],
     "chat_response_needed": True,
@@ -165,15 +203,16 @@ async def classify(user_message: str, user_id: int = None) -> dict:
     tomorrow = (now + timedelta(days=1)).strftime("%Y-%m-%d")
     dt_str = f"{now.strftime('%Y-%m-%d %H:%M')} ({_WEEKDAYS_RU[now.weekday()]})"
 
+    # Lightweight context for router: only conversation_state (no heavy DB queries).
+    # Full retrieval happens in chat_assistant.py when actually answering.
     user_context_block = ""
     if user_id:
         try:
-            from bot.modules.chat_assistant import get_user_context
-            ctx = await get_user_context(user_id, query=user_message)
+            ctx = await _get_lightweight_router_context(user_id)
             if ctx:
                 user_context_block = (
                     "\n===========================\n"
-                    "ДАННЫЕ ПОЛЬЗОВАТЕЛЯ\n"
+                    "КОНТЕКСТ ДИАЛОГА\n"
                     "===========================\n"
                     f"{ctx}\n"
                 )
