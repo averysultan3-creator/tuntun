@@ -255,10 +255,27 @@ async def classify(user_message: str, user_id: int = None) -> dict:
         return _normalize(raw)
 
     except Exception as e:
-        logging.error(f"classify error user={user_id}: {type(e).__name__}: {e}")
+        err_type = type(e).__name__
+        err_str = str(e)
+        logging.error(f"classify error user={user_id}: {err_type}: {err_str}")
+        # Map known OpenAI error types to helpful messages
+        err_lower = err_str.lower()
+        if "authentication" in err_lower or "invalid_api_key" in err_lower or "incorrect api key" in err_lower:
+            msg = "❌ Неверный OpenAI API ключ. Проверь OPENAI_API_KEY в .env"
+        elif "model_not_found" in err_lower or "does not exist" in err_lower or "invalid model" in err_lower:
+            from bot.ai.model_router import get_model as _gm
+            msg = f"❌ Модель не найдена: {_gm('router')}. Проверь OPENAI_MODEL_ROUTER в .env"
+        elif "insufficient_quota" in err_lower or "quota" in err_lower or "billing" in err_lower:
+            msg = "❌ Закончились кредиты OpenAI. Проверь баланс на platform.openai.com"
+        elif "rate_limit" in err_lower or "rate limit" in err_lower:
+            msg = "⏳ Превышен лимит запросов OpenAI. Подожди немного."
+        elif "connection" in err_lower or "timeout" in err_lower or "network" in err_lower:
+            msg = "🌐 Нет соединения с OpenAI. Проверь интернет на сервере."
+        else:
+            msg = f"❌ Ошибка AI ({err_type}): {err_str[:120]}"
         return {
             "actions": [],
             "chat_response_needed": True,
             "chat_question": None,
-            "reply": "Ошибка соединения с AI. Попробуй позже.",
+            "reply": msg,
         }

@@ -211,9 +211,23 @@ async def handle_chat_response(
         )
         return resp.choices[0].message.content.strip()
     except Exception as e:
-        logging.error("handle_chat_response GPT error model=%s user=%s: %s", 
-                      model if 'model' in dir() else "unknown", user_id, e)
-        return "Не смог ответить — ошибка соединения с AI. Попробуй ещё раз."
+        err_type = type(e).__name__
+        err_str = str(e)
+        err_lower = err_str.lower()
+        _model_used = model if 'model' in locals() else "unknown"
+        logging.error("handle_chat_response GPT error model=%s user=%s %s: %s",
+                      _model_used, user_id, err_type, err_str)
+        if "authentication" in err_lower or "invalid_api_key" in err_lower or "incorrect api key" in err_lower:
+            return "❌ Неверный OpenAI API ключ. Проверь OPENAI_API_KEY в .env"
+        elif "model_not_found" in err_lower or "does not exist" in err_lower or "invalid model" in err_lower:
+            return f"❌ Модель не найдена: {_model_used}. Проверь имя модели в .env"
+        elif "insufficient_quota" in err_lower or "quota" in err_lower or "billing" in err_lower:
+            return "❌ Закончились кредиты OpenAI. Проверь баланс на platform.openai.com"
+        elif "rate_limit" in err_lower or "rate limit" in err_lower:
+            return "⏳ Лимит запросов OpenAI. Подожди немного и повтори."
+        elif "connection" in err_lower or "timeout" in err_lower or "network" in err_lower:
+            return "🌐 Нет соединения с OpenAI. Проверь интернет на сервере."
+        return f"❌ Ошибка AI ({err_type}): {err_str[:120]}"
 
 
 

@@ -69,6 +69,42 @@ async def cmd_menu(message: Message):
     await message.answer("📱 Главное меню:", reply_markup=main_menu_keyboard())
 
 
+@router.message(Command("debug"))
+async def cmd_debug(message: Message):
+    """Show config + test OpenAI connectivity — admin only."""
+    if not _is_allowed(message.from_user.id):
+        return
+    from bot.ai.model_router import get_model
+    key = config.OPENAI_API_KEY
+    key_hint = f"{key[:8]}...{key[-4:]}" if len(key) > 12 else ("(пусто)" if not key else key)
+    token = config.BOT_TOKEN
+    token_hint = f"{token[:10]}..." if token else "(пусто)"
+    lines = [
+        "🔧 *Debug info*",
+        f"`BOT_TOKEN   :` `{token_hint}`",
+        f"`API_KEY     :` `{key_hint}`",
+        f"`MODEL_ROUTER:` `{get_model('router')}`",
+        f"`MODEL_CHAT  :` `{get_model('chat')}`",
+        f"`MODEL_REASON:` `{get_model('reasoning')}`",
+        f"`TIMEZONE    :` `{config.TIMEZONE}`",
+        "",
+        "🔌 Тестирую соединение с OpenAI...",
+    ]
+    await message.answer("\n".join(lines), parse_mode="Markdown")
+    # Live test
+    try:
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(api_key=config.OPENAI_API_KEY)
+        resp = await client.chat.completions.create(
+            model=get_model("router"),
+            messages=[{"role": "user", "content": "ping"}],
+            max_tokens=5,
+        )
+        await message.answer(f"✅ OpenAI OK — модель `{get_model('router')}` отвечает", parse_mode="Markdown")
+    except Exception as e:
+        await message.answer(f"❌ OpenAI ОШИБКА:\n`{type(e).__name__}: {str(e)[:300]}`", parse_mode="Markdown")
+
+
 @router.message(F.voice)
 async def handle_voice(message: Message, state: FSMContext, scheduler=None):
     if not _is_allowed(message.from_user.id):
