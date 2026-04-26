@@ -4,98 +4,174 @@ setlocal EnableDelayedExpansion
 title TUNTUN — Server
 
 echo ============================================================
-echo   TUNTUN — Deploy ^& Run (live logs)
+echo   TUNTUN — One-Click Deploy ^& Run
 echo ============================================================
 echo.
 
 cd /d "%~dp0"
-
-:: ---- Logs dir ----
 if not exist "logs" mkdir "logs"
-set "LOGFILE=logs\deploy.log"
 
-:: ---- Python detection ----
+:: ================================================================
+:: 1. PYTHON DETECTION
+:: ================================================================
 set "PYTHON="
-for /f "usebackq tokens=1,2 delims==" %%a in (".env") do (
-    if "%%a"=="PYTHON_EXE" set "PYTHON=%%b"
-)
-if not defined PYTHON (
-    if exist ".venv\Scripts\python.exe" (
-        set "PYTHON=.venv\Scripts\python.exe"
-    ) else if exist "C:\Python312\python.exe" (
-        set "PYTHON=C:\Python312\python.exe"
-    ) else if exist "C:\Python311\python.exe" (
-        set "PYTHON=C:\Python311\python.exe"
-    ) else if exist "C:\Python310\python.exe" (
-        set "PYTHON=C:\Python310\python.exe"
-    ) else (
-        set "PYTHON=python"
+
+:: Check .env override first
+if exist ".env" (
+    for /f "usebackq tokens=1,* delims==" %%a in (".env") do (
+        if "%%a"=="PYTHON_EXE" set "PYTHON=%%b"
     )
 )
-echo [INFO] Python: %PYTHON%
 
-:: ---- .env check ----
-if not exist ".env" (
-    echo [ERROR] .env not found!
+if not defined PYTHON (
+    for %%p in (
+        ".venv\Scripts\python.exe"
+        "%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
+        "%LOCALAPPDATA%\Programs\Python\Python311\python.exe"
+        "%LOCALAPPDATA%\Programs\Python\Python310\python.exe"
+        "C:\Python312\python.exe"
+        "C:\Python311\python.exe"
+        "C:\Python310\python.exe"
+    ) do (
+        if not defined PYTHON (
+            if exist %%p set "PYTHON=%%~p"
+        )
+    )
+)
+
+if not defined PYTHON (
+    where python >nul 2>&1
+    if not errorlevel 1 set "PYTHON=python"
+)
+
+if not defined PYTHON (
+    echo [ERROR] Python не найден!
+    echo         Установи Python 3.10+ с https://python.org
+    echo         или добавь в .env строку: PYTHON_EXE=C:\путь\к\python.exe
     pause
     exit /b 1
 )
 
-:: ---- git pull ----
-echo.
-echo [GIT] Pulling latest code...
-git fetch origin >nul 2>&1
-git pull origin main 2>&1
-if errorlevel 1 (
-    echo [WARN] git pull failed — running with current code
+echo [OK] Python: %PYTHON%
+
+:: ================================================================
+:: 2. .ENV CHECK / SETUP
+:: ================================================================
+if not exist ".env" (
+    echo.
+    echo [SETUP] Файл .env не найден. Создаём...
+    echo.
+    set /p "TG_TOKEN=  Введи TELEGRAM_BOT_TOKEN: "
+    set /p "OAI_KEY=  Введи OPENAI_API_KEY:      "
+    echo.
+
+    if not defined TG_TOKEN (
+        echo [ERROR] Токен не введён. Прерывание.
+        pause
+        exit /b 1
+    )
+    if not defined OAI_KEY (
+        echo [ERROR] API ключ не введён. Прерывание.
+        pause
+        exit /b 1
+    )
+
+    (
+        echo TELEGRAM_BOT_TOKEN=!TG_TOKEN!
+        echo OPENAI_API_KEY=!OAI_KEY!
+        echo OPENAI_MODEL=gpt-4o-mini
+        echo OPENAI_MODEL_ROUTER=gpt-4o-mini
+        echo OPENAI_MODEL_CHAT=gpt-4o
+        echo OPENAI_MODEL_REASONING=gpt-4o
+        echo OPENAI_MODEL_VISION=gpt-4o
+        echo OPENAI_TRANSCRIBE_MODEL=whisper-1
+        echo OPENAI_MODEL_EMBEDDINGS=text-embedding-3-small
+        echo DATABASE_PATH=tuntun.db
+        echo TIMEZONE=Europe/Warsaw
+        echo ADMIN_TELEGRAM_IDS=
+        echo GIT_BRANCH=main
+        echo AUTO_UPDATE_ENABLED=true
+        echo AUTO_UPDATE_INTERVAL_MINUTES=2
+    ) > ".env"
+
+    echo [OK] .env создан.
 )
 
-:: ---- pip install ----
+:: ================================================================
+:: 3. GIT PULL
+:: ================================================================
 echo.
-echo [PIP] Installing dependencies...
+echo [GIT] Обновляем код...
+where git >nul 2>&1
+if errorlevel 1 (
+    echo [WARN] git не найден — работаем с текущим кодом
+) else (
+    git config pull.rebase false >nul 2>&1
+    git pull origin main 2>&1
+)
+
+:: ================================================================
+:: 4. PIP INSTALL
+:: ================================================================
+echo.
+echo [PIP] Устанавливаем зависимости...
+"%PYTHON%" -m pip install --quiet --upgrade pip >nul 2>&1
 "%PYTHON%" -m pip install --quiet -r requirements.txt
 if errorlevel 1 (
-    echo [WARN] pip install had errors — continuing anyway
+    echo [WARN] pip: возможны ошибки — продолжаем...
 )
 
-:: ---- init DB ----
+:: ================================================================
+:: 5. INIT DB
+:: ================================================================
 echo.
-echo [DB] Initializing database...
+echo [DB] Инициализация базы данных...
 "%PYTHON%" main.py --init-db
 if errorlevel 1 (
-    echo [ERROR] --init-db failed!
+    echo [ERROR] --init-db завершился с ошибкой!
     pause
     exit /b 1
 )
 
-:: ---- Stop old instance if running ----
+:: ================================================================
+:: 6. STOP OLD INSTANCE
+:: ================================================================
+echo.
+echo [BOT] Останавливаем старый процесс (если есть)...
 "%PYTHON%" run_background.py stop >nul 2>&1
 timeout /t 2 /nobreak >nul
 
-:: ---- Start bot in background (PID tracked, logs -> logs\runtime.log) ----
-echo.
+:: ================================================================
+:: 7. START BOT
+:: ================================================================
+echo [BOT] Запускаем...
 "%PYTHON%" run_background.py start
 if errorlevel 1 (
-    echo [ERROR] Failed to start bot
+    echo [ERROR] Не удалось запустить бота!
     pause
     exit /b 1
 )
 
-:: ---- Wait for bot to create log file ----
-echo [INFO] Waiting for bot to start...
-timeout /t 3 /nobreak >nul
-if not exist "logs\runtime.log" echo. > "logs\runtime.log"
+:: ================================================================
+:: 8. LIVE LOGS
+:: ================================================================
+echo.
+echo ============================================================
+echo   Бот запущен. Логи в реальном времени ниже.
+echo   Ctrl+C = остановить просмотр логов (бот продолжит работать)
+echo   Для полной остановки: stop.bat
+echo ============================================================
+echo.
 
-:: ---- Tail logs in this window (Ctrl+C to stop tailing, bot keeps running) ----
+:: Wait for log file to be created
+:waitlog
+if not exist "logs\runtime.log" (
+    timeout /t 1 /nobreak >nul
+    goto waitlog
+)
+
+powershell -NoProfile -Command "Get-Content 'logs\runtime.log' -Wait -Tail 50"
+
 echo.
-echo ============================================================
-echo   Live logs (bot runs in background). Ctrl+C = stop tailing.
-echo   auto_update.bat restarts bot automatically on new commits.
-echo ============================================================
-echo.
-powershell -NoProfile -Command "$f='logs\runtime.log'; while (-not (Test-Path $f)) { Start-Sleep 1 }; Get-Content $f -Wait -Tail 50"
-echo.
-echo [INFO] Log tailing stopped. Bot is still running in background.
-echo [INFO] To stop bot:  stop.bat
-echo [INFO] To see logs:  type logs\runtime.log
+echo [INFO] Просмотр логов остановлен. Бот продолжает работать в фоне.
 pause
