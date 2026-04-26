@@ -74,11 +74,11 @@ if not exist ".env" (
     (
         echo TELEGRAM_BOT_TOKEN=!TG!
         echo OPENAI_API_KEY=!OAI!
-        echo OPENAI_MODEL=gpt-4o-mini
-        echo OPENAI_MODEL_ROUTER=gpt-4o-mini
-        echo OPENAI_MODEL_CHAT=gpt-4o
-        echo OPENAI_MODEL_REASONING=gpt-4o
-        echo OPENAI_MODEL_VISION=gpt-4o
+        echo OPENAI_MODEL=gpt-5.4-mini
+        echo OPENAI_MODEL_ROUTER=gpt-5.4-mini
+        echo OPENAI_MODEL_CHAT=gpt-5.4
+        echo OPENAI_MODEL_REASONING=gpt-5.4
+        echo OPENAI_MODEL_VISION=gpt-5.4
         echo OPENAI_TRANSCRIBE_MODEL=whisper-1
         echo OPENAI_MODEL_EMBEDDINGS=text-embedding-3-small
         echo DATABASE_PATH=tuntun.db
