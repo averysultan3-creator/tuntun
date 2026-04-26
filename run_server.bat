@@ -55,46 +55,20 @@ if not defined PYTHON (
 echo [OK] Python: %PYTHON%
 
 :: ================================================================
-:: 2. .ENV CHECK / SETUP
+:: 2. .ENV CHECK
 :: ================================================================
 if not exist ".env" (
     echo.
-    echo [SETUP] Файл .env не найден. Создаём...
+    echo ============================================================
+    echo   [СТОП] Файл .env не найден!
     echo.
-    set /p "TG_TOKEN=  Введи TELEGRAM_BOT_TOKEN: "
-    set /p "OAI_KEY=  Введи OPENAI_API_KEY:      "
+    echo   Скопируй файл .env со своего компа в эту папку:
+    echo   %~dp0.env
     echo.
-
-    if not defined TG_TOKEN (
-        echo [ERROR] Токен не введён. Прерывание.
-        pause
-        exit /b 1
-    )
-    if not defined OAI_KEY (
-        echo [ERROR] API ключ не введён. Прерывание.
-        pause
-        exit /b 1
-    )
-
-    (
-        echo TELEGRAM_BOT_TOKEN=!TG_TOKEN!
-        echo OPENAI_API_KEY=!OAI_KEY!
-        echo OPENAI_MODEL=gpt-4o-mini
-        echo OPENAI_MODEL_ROUTER=gpt-4o-mini
-        echo OPENAI_MODEL_CHAT=gpt-4o
-        echo OPENAI_MODEL_REASONING=gpt-4o
-        echo OPENAI_MODEL_VISION=gpt-4o
-        echo OPENAI_TRANSCRIBE_MODEL=whisper-1
-        echo OPENAI_MODEL_EMBEDDINGS=text-embedding-3-small
-        echo DATABASE_PATH=tuntun.db
-        echo TIMEZONE=Europe/Warsaw
-        echo ADMIN_TELEGRAM_IDS=
-        echo GIT_BRANCH=main
-        echo AUTO_UPDATE_ENABLED=true
-        echo AUTO_UPDATE_INTERVAL_MINUTES=2
-    ) > ".env"
-
-    echo [OK] .env создан.
+    echo   Это нужно сделать ОДИН РАЗ. После этого всё будет работать.
+    echo ============================================================
+    pause
+    exit /b 1
 )
 
 :: ================================================================
