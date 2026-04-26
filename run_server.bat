@@ -81,6 +81,11 @@ if errorlevel 1 (
     exit /b 1
 )
 
+:: ---- Wait for bot to create log file ----
+echo [INFO] Waiting for bot to start...
+timeout /t 3 /nobreak >nul
+if not exist "logs\runtime.log" echo. > "logs\runtime.log"
+
 :: ---- Tail logs in this window (Ctrl+C to stop tailing, bot keeps running) ----
 echo.
 echo ============================================================
@@ -88,7 +93,7 @@ echo   Live logs (bot runs in background). Ctrl+C = stop tailing.
 echo   auto_update.bat restarts bot automatically on new commits.
 echo ============================================================
 echo.
-powershell -NoProfile -Command "Get-Content 'logs\runtime.log' -Wait -Tail 30"
+powershell -NoProfile -Command "$f='logs\runtime.log'; while (-not (Test-Path $f)) { Start-Sleep 1 }; Get-Content $f -Wait -Tail 50"
 echo.
 echo [INFO] Log tailing stopped. Bot is still running in background.
 echo [INFO] To stop bot:  stop.bat
