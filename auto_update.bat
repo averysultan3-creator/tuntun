@@ -64,6 +64,9 @@ if errorlevel 1 (
     goto :cleanup
 )
 
+:: ---- Ensure git pull uses fast-forward only (no merge prompts) ----
+git config pull.rebase false >nul 2>&1
+
 :: ---- Fetch latest ----
 call :LOG "[GIT] Fetching origin/%GIT_BRANCH%..."
 git fetch origin %GIT_BRANCH% >> "%LOGFILE%" 2>&1
