@@ -68,21 +68,29 @@ if errorlevel 1 (
     exit /b 1
 )
 
-:: ---- Kill old instance if running ----
-if exist "bot.pid" (
-    set /p OLD_PID=<"bot.pid"
-    echo [INFO] Stopping old instance (PID !OLD_PID!)...
-    "%PYTHON%" run_background.py stop >nul 2>&1
-    timeout /t 2 /nobreak >nul
+:: ---- Stop old instance if running ----
+"%PYTHON%" run_background.py stop >nul 2>&1
+timeout /t 2 /nobreak >nul
+
+:: ---- Start bot in background (PID tracked, logs -> logs\runtime.log) ----
+echo.
+"%PYTHON%" run_background.py start
+if errorlevel 1 (
+    echo [ERROR] Failed to start bot
+    pause
+    exit /b 1
 )
 
-:: ---- Run bot in THIS window (live logs) ----
+:: ---- Tail logs in this window (Ctrl+C to stop tailing, bot keeps running) ----
 echo.
 echo ============================================================
-echo   Bot is starting. Logs appear below. Press Ctrl+C to stop.
+echo   Live logs (bot runs in background). Ctrl+C = stop tailing.
+echo   auto_update.bat restarts bot automatically on new commits.
 echo ============================================================
 echo.
-"%PYTHON%" main.py
+powershell -NoProfile -Command "Get-Content 'logs\runtime.log' -Wait -Tail 30"
 echo.
-echo [INFO] Bot stopped.
+echo [INFO] Log tailing stopped. Bot is still running in background.
+echo [INFO] To stop bot:  stop.bat
+echo [INFO] To see logs:  type logs\runtime.log
 pause
