@@ -210,8 +210,8 @@ async def dispatch_actions(actions: list, user_id: int, ai_reply: str,
                 results.append(result)
 
         except Exception as e:
-            logging.error(f"dispatch_actions error for intent={intent}: {e}")
-            results.append(f"⚠️ Ошибка выполнения: {intent}")
+            logging.error(f"dispatch_actions error for intent={intent} user={user_id}: {e}", exc_info=True)
+            results.append(f"⚠️ Не смог выполнить «{intent}». Ошибка записана в лог.")
 
     results.extend(low_confidence_questions)
 

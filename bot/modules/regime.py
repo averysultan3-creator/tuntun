@@ -55,27 +55,32 @@ async def handle_day_plan(user_id: int, params: dict, ai_response: str, **kwargs
     tasks = await db.task_list(user_id, filter_date=plan_date)
 
     # Read user wake/sleep settings
-    wake_time = await db.setting_get(user_id, "wake_time") or "08:00"
-    sleep_time = await db.setting_get(user_id, "sleep_time") or "23:00"
+    wake_time_setting = await db.setting_get(user_id, "wake_time")
+    sleep_time_setting = await db.setting_get(user_id, "sleep_time")
+    wake_time = wake_time_setting or "08:00"
+    sleep_time = sleep_time_setting or "23:00"
+    has_custom_schedule = bool(wake_time_setting or sleep_time_setting)
 
     blocks = []
 
-    # Wake up block
-    blocks.append({"time": wake_time, "text": f"🌅 Подъём", "type": "routine"})
+    # Wake up block (fact if set, suggestion otherwise)
+    wake_label = "🌅 Подъём" if wake_time_setting else "🌅 Подъём (ориентировочно)"
+    blocks.append({"time": wake_time, "text": wake_label, "type": "routine"})
 
-    # Events with time
+    # Events with time — from real DB
     for e in events:
         if e.get("start_time"):
             end = f"–{e['end_time']}" if e.get("end_time") else ""
             blocks.append({"time": e["start_time"], "text": f"📅 {e['title']} {end}".strip(), "type": "event"})
 
-    # Meals
+    # Meals — show as suggestions, not facts (unless user added them to schedule)
     if include_meals:
         for meal_time, label in [("08:30", "🍳 Завтрак"), ("13:00", "🍽️ Обед"), ("19:00", "🥗 Ужин")]:
             if meal_time >= wake_time:
-                blocks.append({"time": meal_time, "text": label, "type": "meal"})
+                meal_label = f"{label} (предложение)" if not has_custom_schedule else label
+                blocks.append({"time": meal_time, "text": meal_label, "type": "meal"})
 
-    # Tasks
+    # Tasks — from real DB
     for t in tasks:
         if t.get("due_time"):
             blocks.append({"time": t["due_time"], "text": f"✅ {t['title']}", "type": "task"})
@@ -83,7 +88,8 @@ async def handle_day_plan(user_id: int, params: dict, ai_response: str, **kwargs
             blocks.append({"time": "flexible", "text": f"✅ {t['title']}", "type": "task"})
 
     # Sleep block
-    blocks.append({"time": sleep_time, "text": f"🌙 Отход ко сну", "type": "routine"})
+    sleep_label = "🌙 Отход ко сну" if sleep_time_setting else "🌙 Отход ко сну (ориентировочно)"
+    blocks.append({"time": sleep_time, "text": sleep_label, "type": "routine"})
 
     timed = sorted([b for b in blocks if b["time"] != "flexible"], key=lambda x: x["time"])
     flexible = [b for b in blocks if b["time"] == "flexible"]

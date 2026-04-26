@@ -25,13 +25,15 @@ TOTAL = 0
 def ok(name, detail=""):
     global PASS, TOTAL
     PASS += 1; TOTAL += 1
-    print(f"  PASS  {name}" + (f"  ↳ {detail[:100]}" if detail else ""))
+    detail_str = f"  >> {detail[:100]}" if detail else ""
+    print(f"  PASS  {name}{detail_str}")
 
 
 def fail(name, detail=""):
     global FAIL, TOTAL
     FAIL += 1; TOTAL += 1
-    print(f"  FAIL  {name}" + (f"  ↳ {detail[:120]}" if detail else ""))
+    detail_str = f"  >> {detail[:120]}" if detail else ""
+    print(f"  FAIL  {name}{detail_str}")
 
 
 # ──────────────────────────────────────────────────────────────
@@ -85,24 +87,45 @@ def _mock_openai(json_str: str):
     return patch("bot.ai.intent._client", client_mock)
 
 
+def _mock_chat_assistant(reply: str):
+    """Patch chat_assistant so handle_chat_response returns the given reply."""
+    return patch(
+        "bot.modules.dispatcher.bot.modules.chat_assistant.handle_chat_response",
+        new=AsyncMock(return_value=reply),
+    )
+
+
 async def _dispatch(ai_json_str: str, msg_text: str) -> str:
-    """Run classify (mocked) → dispatch → return response string."""
+    """Run classify (mocked) + dispatch (chat_assistant mocked) → return response string."""
     from bot.ai.intent import classify
     from bot.modules.dispatcher import dispatch_actions
+    import json as _json
+
+    # Extract expected reply from AI JSON to use as mock chat response
+    try:
+        _ai = _json.loads(ai_json_str)
+        _expected_reply = _ai.get("reply") or "Чем могу помочь?"
+    except Exception:
+        _expected_reply = "Чем могу помочь?"
 
     with _mock_openai(ai_json_str):
         result = await classify(msg_text, user_id=USER_ID)
 
-    return await dispatch_actions(
-        actions=result.get("actions", []),
-        user_id=USER_ID,
-        ai_reply=result.get("reply", ""),
-        chat_response_needed=result.get("chat_response_needed", False),
-        is_data_query=result.get("is_data_query", False),
-        needs_retrieval=result.get("needs_retrieval", False),
-        data_query_type=result.get("data_query_type"),
-        message_text=msg_text,
-    )
+    # Patch handle_chat_response so dispatcher doesn't call real OpenAI
+    with patch(
+        "bot.modules.chat_assistant.handle_chat_response",
+        new=AsyncMock(return_value=_expected_reply),
+    ):
+        return await dispatch_actions(
+            actions=result.get("actions", []),
+            user_id=USER_ID,
+            ai_reply=result.get("reply", ""),
+            chat_response_needed=result.get("chat_response_needed", False),
+            is_data_query=result.get("is_data_query", False),
+            needs_retrieval=result.get("needs_retrieval", False),
+            data_query_type=result.get("data_query_type"),
+            message_text=msg_text,
+        )
 
 
 # ──────────────────────────────────────────────────────────────

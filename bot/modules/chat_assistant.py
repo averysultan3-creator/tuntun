@@ -201,8 +201,9 @@ async def handle_chat_response(
         )
         return resp.choices[0].message.content.strip()
     except Exception as e:
-        logging.error("handle_chat_response GPT error: %s", e)
-        return "Не смог ответить. Попробуй ещё раз."
+        logging.error("handle_chat_response GPT error model=%s user=%s: %s", 
+                      model if 'model' in dir() else "unknown", user_id, e)
+        return "Не смог ответить — ошибка соединения с AI. Попробуй ещё раз."
 
 
 

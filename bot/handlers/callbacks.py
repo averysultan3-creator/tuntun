@@ -196,3 +196,82 @@ async def cb_task_done(callback: CallbackQuery):
     if success:
         await callback.message.edit_text(callback.message.text + "\n\n✅ Выполнено!")
     await callback.answer("Задача отмечена выполненной" if success else "Задача не найдена")
+
+
+@router.callback_query(F.data.startswith("task_delete:"))
+async def cb_task_delete(callback: CallbackQuery):
+    task_id = int(callback.data.split(":")[1])
+    success = await db.task_delete(callback.from_user.id, task_id)
+    if success:
+        try:
+            await callback.message.edit_text(callback.message.text + "\n\n🗑 Удалено")
+        except Exception:
+            pass
+    await callback.answer("Задача удалена" if success else "Задача не найдена")
+
+
+@router.callback_query(F.data.startswith("task_remind:"))
+async def cb_task_remind(callback: CallbackQuery):
+    task_id = int(callback.data.split(":")[1])
+    await callback.answer("Напиши когда напомнить, например: «напомни задачу #" + str(task_id) + " завтра в 12:00»")
+
+
+@router.callback_query(F.data.startswith("task_edit:"))
+async def cb_task_edit(callback: CallbackQuery):
+    task_id = int(callback.data.split(":")[1])
+    await callback.answer(f"Напиши что изменить: «задача #{task_id} переименовать в ...»")
+
+
+@router.callback_query(F.data == "task_add")
+async def cb_task_add(callback: CallbackQuery):
+    await callback.answer("Напиши задачу, например: «напомни купить молоко»")
+
+
+@router.callback_query(F.data == "reminder_add")
+async def cb_reminder_add(callback: CallbackQuery):
+    await callback.answer("Напиши напоминание, например: «напомни завтра в 10:00 встреча»")
+
+
+@router.callback_query(F.data.startswith("plan:"))
+async def cb_plan(callback: CallbackQuery):
+    action = callback.data.split(":")[1] if ":" in callback.data else ""
+    user_id = callback.from_user.id
+
+    if action == "table":
+        # Show last plan as a simple formatted table
+        try:
+            from bot.db.database import db as _db
+            state = await _db.conversation_state_get(user_id)
+            if state and state.get("last_plan_json"):
+                import json
+                plan = json.loads(state["last_plan_json"])
+                timed = plan.get("timed", [])
+                flexible = plan.get("flexible", [])
+                lines = ["```", "Время    | Событие", "---------|--------"]
+                for b in timed:
+                    t = b.get("time", "")
+                    txt = b.get("text", "")[:35]
+                    lines.append(f"{t:<8} | {txt}")
+                if flexible:
+                    lines.append("---------|--------")
+                    for b in flexible:
+                        lines.append(f"flex     | {b[:35]}")
+                lines.append("```")
+                await callback.message.answer("\n".join(lines), parse_mode="Markdown")
+            else:
+                await callback.message.answer("Нет сохранённого плана. Запроси «дай план на сегодня».")
+        except Exception as e:
+            logging.error(f"plan:table callback error: {e}")
+            await callback.message.answer("❌ Ошибка при отображении таблицы")
+        await callback.answer()
+
+    elif action == "table":
+        await callback.answer("Таблица уже отправлена")
+    else:
+        await callback.answer(f"Действие '{action}' пока не поддерживается")
+
+
+@router.callback_query(F.data.startswith("analytics:"))
+async def cb_analytics(callback: CallbackQuery):
+    section_name = callback.data.split(":", 1)[1] if ":" in callback.data else ""
+    await callback.answer(f"Напиши «аналитика {section_name}» для получения статистики")

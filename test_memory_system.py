@@ -1,4 +1,4 @@
-"""Tests for memory system: keywords, synonyms, date_parser, auto_memory.
+﻿"""Tests for memory system: keywords, synonyms, date_parser, auto_memory.
 
 Run:
     C:\Python310\python.exe test_memory_system.py
@@ -56,7 +56,7 @@ try:
     # short
     kw3 = extract_keywords("да")
     assert len(kw3) == 0
-    ok("single word → empty")
+    ok("single word -> empty")
 
     # cap at 10
     long_text = " ".join(f"слово{i}" for i in range(30))
@@ -77,15 +77,15 @@ try:
 
     expanded = expand_with_synonyms(["реклама"])
     assert "facebook" in expanded or "fb" in expanded or "ads" in expanded, f"got: {expanded}"
-    ok("реклама → includes facebook/ads")
+    ok("реклама -> includes facebook/ads")
 
     expanded2 = expand_with_synonyms(["facebook"])
     assert "реклама" in expanded2 or "маркетинг" in expanded2, f"got: {expanded2}"
-    ok("facebook → back-maps to реклама/маркетинг")
+    ok("facebook -> back-maps to реклама/маркетинг")
 
     expanded3 = expand_with_synonyms(["финансы"])
     assert any(w in expanded3 for w in ["деньги", "бюджет", "расходы", "трата"]), f"got: {expanded3}"
-    ok("финансы → includes деньги/бюджет")
+    ok("финансы -> includes деньги/бюджет")
 
     # cap at 30
     huge = expand_with_synonyms(["реклама", "финансы", "еда", "сон", "здоровье", "машина"])
@@ -109,17 +109,17 @@ try:
     # сегодня
     d1, d2 = parse_date_range("сегодня")
     assert d1 == d2 == today.isoformat(), f"got {d1}, {d2}"
-    ok("сегодня → today")
+    ok("сегодня -> today")
 
     # вчера
     d1, d2 = parse_date_range("вчера")
     assert d1 == d2 == (today - timedelta(days=1)).isoformat(), f"got {d1}, {d2}"
-    ok("вчера → yesterday")
+    ok("вчера -> yesterday")
 
     # завтра
     d1, d2 = parse_date_range("завтра")
     assert d1 == d2 == (today + timedelta(days=1)).isoformat(), f"got {d1}, {d2}"
-    ok("завтра → tomorrow")
+    ok("завтра -> tomorrow")
 
     # последние 7 дней
     d1, d2 = parse_date_range("последние 7 дней")
@@ -127,28 +127,28 @@ try:
     from datetime import datetime
     delta = (datetime.fromisoformat(d2) - datetime.fromisoformat(d1)).days
     assert delta == 7, f"expected 7 day gap, got {delta}"
-    ok("последние 7 дней → correct range")
+    ok("последние 7 дней -> correct range")
 
     # конкретный год
     d1, d2 = parse_date_range("за 2025")
     assert d1 == "2025-01-01" and d2 == "2025-12-31", f"got {d1}, {d2}"
-    ok("за 2025 → full year range")
+    ok("за 2025 -> full year range")
 
     # named month
     d1, d2 = parse_date_range("за март")
     assert d1.endswith("-03-01"), f"got: {d1}"
     assert d2.endswith("-03-31"), f"got: {d2}"
-    ok("за март → march range")
+    ok("за март -> march range")
 
-    # неизвестный текст → None, None
+    # неизвестный текст -> None, None
     d1, d2 = parse_date_range("привет как дела")
     assert d1 is None and d2 is None, f"expected None, got {d1}, {d2}"
-    ok("unrelated text → (None, None)")
+    ok("unrelated text -> (None, None)")
 
     # empty string
     d1, d2 = parse_date_range("")
     assert d1 is None and d2 is None
-    ok("empty string → (None, None)")
+    ok("empty string -> (None, None)")
 
 except Exception as e:
     fail("date_parser", str(e))
@@ -162,19 +162,19 @@ try:
     from bot.modules.auto_memory import _should_skip
 
     assert _should_skip("да") is True
-    ok("too short → skip")
+    ok("too short -> skip")
 
     assert _should_skip("добавь задачу сделать отчёт") is True
-    ok("command 'добавь' → skip")
+    ok("command 'добавь' -> skip")
 
     assert _should_skip("/start") is True
-    ok("/command → skip")
+    ok("/command -> skip")
 
     assert _should_skip("Я обычно встаю в 8 утра и сразу пью кофе") is False
-    ok("personal habit → don't skip")
+    ok("personal habit -> don't skip")
 
     assert _should_skip("запомни что я не люблю рано вставать") is False
-    ok("'запомни' → don't skip")
+    ok("'запомни' -> don't skip")
 
 except Exception as e:
     fail("auto_memory _should_skip", str(e))
@@ -192,30 +192,30 @@ try:
     cat, key, val = result
     assert cat == "preference", f"expected preference, got {cat}"
     assert "кратк" in val, f"got val: {val}"
-    ok("'запомни' → preference category")
+    ok("'запомни' -> preference category")
 
     result2 = _try_extract("я не люблю длинные объяснения")
     assert result2 is not None
     cat2, _, val2 = result2
     assert cat2 == "dislike"
-    ok("'я не люблю' → dislike category")
+    ok("'я не люблю' -> dislike category")
 
     result3 = _try_extract("я обычно работаю с 10 до 18")
     assert result3 is not None
     cat3, _, val3 = result3
     assert cat3 == "habit"
-    ok("'я обычно' → habit category")
+    ok("'я обычно' -> habit category")
 
     result4 = _try_extract("встаю в 07:30")
     assert result4 is not None
     cat4, _, val4 = result4
     assert cat4 == "wake_time"
     assert "07:30" in val4 or "07" in val4, f"got: {val4}"
-    ok("'встаю в HH:MM' → wake_time")
+    ok("'встаю в HH:MM' -> wake_time")
 
     result5 = _try_extract("привет как погода")
     assert result5 is None
-    ok("no pattern → None")
+    ok("no pattern -> None")
 
 except Exception as e:
     fail("auto_memory _try_extract", str(e))

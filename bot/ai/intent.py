@@ -216,7 +216,7 @@ async def classify(user_message: str, user_id: int = None) -> dict:
         return _normalize(raw)
 
     except Exception as e:
-        logging.error(f"classify error: {e}")
+        logging.error(f"classify error user={user_id}: {type(e).__name__}: {e}")
         return {
             "actions": [],
             "chat_response_needed": True,
