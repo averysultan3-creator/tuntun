@@ -1,0 +1,53 @@
+# ── Secrets — NEVER commit these ──────────────────────────────────────────
+.env
+.env.local
+.env.server
+.env.production
+
+# ── Database & data files ──────────────────────────────────────────────────
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# ── User data directories ──────────────────────────────────────────────────
+storage/
+logs/
+backups/
+exports/
+
+# ── Runtime files ──────────────────────────────────────────────────────────
+bot.pid
+update.lock
+
+# ── Python ─────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+build/
+dist/
+*.egg-info/
+
+# ── Virtual environments ────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+
+# ── IDE / OS ────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.DS_Store
+Thumbs.db
+
+# ── Test artifacts ──────────────────────────────────────────────────────────
+.pytest_cache/
+test_libs/
+
+# ── Build / export artifacts ────────────────────────────────────────────────
+*.zip
+*.xlsx
+*.log
