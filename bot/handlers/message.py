@@ -98,7 +98,7 @@ async def cmd_debug(message: Message):
         resp = await client.chat.completions.create(
             model=get_model("router"),
             messages=[{"role": "user", "content": "ping"}],
-            max_tokens=5,
+            max_completion_tokens=5,
         )
         await message.answer(f"✅ OpenAI OK — модель `{get_model('router')}` отвечает", parse_mode="Markdown")
     except Exception as e:

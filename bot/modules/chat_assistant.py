@@ -207,7 +207,7 @@ async def handle_chat_response(
             model=model,
             messages=messages,
             temperature=0.4,
-            max_tokens=800,
+            max_completion_tokens=800,
         )
         return resp.choices[0].message.content.strip()
     except Exception as e:
