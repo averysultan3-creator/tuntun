@@ -234,20 +234,9 @@ async def dispatch_actions(actions: list, user_id: int, ai_reply: str,
         )
 
     if chat_response_needed and not _backend_only:
-        need_fallback = (
-            not chat_answer.strip()
-            or (
-                not is_data_query
-                and any(
-                    p in chat_answer.lower()
-                    for p in (
-                        "по этой теме пока нет записей",
-                        "нет записей",
-                        "не могу ответить",
-                    )
-                )
-            )
-        )
+        # Always use smart CHAT model (gpt-5.4) — never use the router mini's reply as the final answer.
+        # Router reply is only a routing hint; real intelligence comes from handle_chat_response.
+        need_fallback = True
         if need_fallback:
             try:
                 from bot.modules.chat_assistant import handle_chat_response

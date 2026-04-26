@@ -94,11 +94,19 @@ async def _get_conversation_state_block(user_id: int) -> str:
         if state.get("active_section"):
             parts.append(f"Активный раздел: {state['active_section']}")
         if state.get("active_object_type") and state.get("active_object_id"):
-            parts.append(f"Последний объект: {state['active_object_type']} #{state['active_object_id']}")
+            parts.append(f"Последний объект: {state['active_object_type']} #{state['active_object_id']} — на него ссылаются \"это\", \"его\", \"удали это\"")
         if state.get("active_date"):
             parts.append(f"Обсуждаемая дата: {state['active_date']}")
+        if state.get("last_discussed_task_ids"):
+            parts.append(f"Обсуждавшиеся задачи (IDs): {state['last_discussed_task_ids']}")
+        if state.get("last_discussed_reminder_ids"):
+            parts.append(f"Обсуждавшиеся напоминания (IDs): {state['last_discussed_reminder_ids']}")
+        if state.get("last_discussed_idea_ids"):
+            parts.append(f"Обсуждавшиеся идеи (IDs): {state['last_discussed_idea_ids']}")
         if state.get("last_plan_json"):
-            parts.append("Последний план дня: [в памяти — пользователь может спросить «выведи таблицей»]")
+            parts.append("Последний план дня сохранён — пользователь может спросить «таблицей», «измени», «перенеси»")
+        if state.get("last_table_json"):
+            parts.append("Последняя таблица сохранена — пользователь может запросить изменения")
         return "\n".join(parts) if parts else ""
     except Exception:
         return ""

@@ -51,6 +51,16 @@ async def handle_create(user_id: int, params: dict, ai_response: str, **kwargs) 
         dt_str = remind_at_clean
 
     recurring_str = " (повторяющееся)" if recurring else ""
+
+    # Save active object for contextual follow-ups ("отмени это")
+    await db.conversation_state_update(
+        user_id,
+        active_topic="reminder",
+        active_object_type="reminder",
+        active_object_id=rid,
+        last_discussed_reminder_ids=str(rid),
+    )
+
     return f"⏰ Напоминание #{rid} на {dt_str}{recurring_str}:\n{text}"
 
 

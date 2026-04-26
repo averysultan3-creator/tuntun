@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, date
+import json
 from bot.db.database import db
 
 
@@ -111,5 +112,13 @@ async def handle_day_plan(user_id: int, params: dict, ai_response: str, **kwargs
         "sleep_time": sleep_time,
     }
     await db.plan_save(user_id, plan_date, plan_data)
+
+    # Save plan in conversation_state for contextual follow-ups ("перенеси завтрак", "убери обед")
+    await db.conversation_state_update(
+        user_id,
+        active_topic="plan",
+        active_date=plan_date,
+        last_plan_json=json.dumps(plan_data, ensure_ascii=False),
+    )
 
     return plan_text

@@ -30,6 +30,15 @@ async def handle_create(user_id: int, params: dict, ai_response: str, **kwargs) 
     priority_icons = {"high": "🔴", "normal": "🟡", "low": "🟢"}
     icon = priority_icons.get(params.get("priority", "normal"), "🟡")
 
+    # Save active object for contextual follow-ups ("это/её/таску")
+    await db.conversation_state_update(
+        user_id,
+        active_topic="task",
+        active_object_type="task",
+        active_object_id=task_id,
+        last_discussed_task_ids=str(task_id),
+    )
+
     return f"✅ {icon} Задача #{task_id} записана: {title}{due_str}"
 
 
@@ -45,6 +54,16 @@ async def handle_list(user_id: int, params: dict, ai_response: str, **kwargs) ->
             filter_date = (today + timedelta(days=1)).strftime("%Y-%m-%d")
 
     tasks = await db.task_list(user_id, filter_date=filter_date)
+
+    # Track discussed task IDs for contextual follow-ups
+    if tasks:
+        task_ids = ",".join(str(t["id"]) for t in tasks)
+        await db.conversation_state_update(
+            user_id,
+            active_topic="tasks",
+            last_discussed_task_ids=task_ids,
+        )
+
     return format_tasks(tasks, filter_date)
 
 
