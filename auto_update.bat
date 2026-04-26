@@ -13,12 +13,23 @@ set "BACKUPDIR=%~dp0storage\backups"
 set "LAST_GOOD_FILE=%~dp0logs\last_good_commit.txt"
 
 :: ---- Python detection ----
-if exist "%~dp0.venv\Scripts\python.exe" (
-    set "PYTHON=%~dp0.venv\Scripts\python.exe"
-) else if exist "C:\Python310\python.exe" (
-    set "PYTHON=C:\Python310\python.exe"
-) else (
-    set "PYTHON=python"
+:: Override via PYTHON_EXE in .env, else auto-detect
+set "PYTHON="
+for /f "usebackq tokens=1,2 delims==" %%a in ("%~dp0.env") do (
+    if "%%a"=="PYTHON_EXE" set "PYTHON=%%b"
+)
+if not defined PYTHON (
+    if exist "%~dp0.venv\Scripts\python.exe" (
+        set "PYTHON=%~dp0.venv\Scripts\python.exe"
+    ) else if exist "C:\Python312\python.exe" (
+        set "PYTHON=C:\Python312\python.exe"
+    ) else if exist "C:\Python311\python.exe" (
+        set "PYTHON=C:\Python311\python.exe"
+    ) else if exist "C:\Python310\python.exe" (
+        set "PYTHON=C:\Python310\python.exe"
+    ) else (
+        set "PYTHON=python"
+    )
 )
 
 :: ---- Timestamp helper ----
