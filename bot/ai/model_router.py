@@ -99,6 +99,9 @@ BACKEND_ONLY_INTENTS: frozenset = frozenset({
     # Schedule & regime
     "schedule_view",        # list output from DB
     "regime_sleep_calc",    # calculation result (deterministic)
+    # Google integration
+    "google_show_link",     # just returns spreadsheet URL from DB
+    "google_sync_status",   # shows sync queue size from DB
 })
 
 # These intents always need the REASONING model.

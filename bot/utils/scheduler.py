@@ -68,6 +68,24 @@ async def setup_scheduler(bot) -> AsyncIOScheduler:
             logging.error(f"Failed to reschedule reminder #{r['id']}: {e}")
 
     logging.info(f"Scheduler started, restored {restored}/{len(reminders)} reminder(s)")
+
+    # Google sync queue worker — runs every 5 minutes if Google is enabled
+    if config.GOOGLE_ENABLED:
+        async def _google_sync_tick():
+            try:
+                from bot.integrations.google.sync import process_sync_queue
+                await process_sync_queue()
+            except Exception as e:
+                logging.warning("Google sync tick error: %s", e)
+
+        _scheduler.add_job(
+            _google_sync_tick,
+            IntervalTrigger(minutes=5, timezone=tz),
+            id="google_sync_queue",
+            replace_existing=True,
+        )
+        logging.info("Google sync queue worker registered (every 5 min)")
+
     return _scheduler
 
 

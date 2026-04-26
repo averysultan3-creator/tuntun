@@ -60,4 +60,18 @@ async def handle_create(user_id: int, params: dict, ai_response: str, **kwargs) 
         return "❌ Ошибка при создании backup"
     size_kb = Path(file_path).stat().st_size // 1024
     summary = f"💾 Backup создан ({size_kb} KB): `{Path(file_path).name}`"
+
+    # Google Drive upload (non-blocking)
+    import asyncio
+    import config as _cfg
+    if _cfg.GOOGLE_ENABLED:
+        from bot.integrations.google.drive import upload_file
+        asyncio.create_task(upload_file(
+            local_path=file_path,
+            subfolder="Backups",
+            user_id=user_id,
+            object_type="backup",
+            object_id=0,
+        ))
+
     return f"{summary}\n__FILE__:{file_path}"

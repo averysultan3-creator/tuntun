@@ -53,6 +53,25 @@ async def handle_expense_add(user_id: int, params: dict, ai_response: str, **kwa
 
     project_str = f" [{project_name}]" if project_name else ""
     desc_str = f" — {description}" if description else ""
+
+    # Google Sheets sync (non-blocking, local_first)
+    import asyncio
+    import config as _cfg
+    if _cfg.GOOGLE_ENABLED:
+        from bot.integrations.google.sync import sync_object_to_google
+        asyncio.create_task(sync_object_to_google(
+            user_id=user_id,
+            object_type="expense",
+            object_id=eid,
+            payload={
+                "amount": amount,
+                "currency": currency,
+                "description": description,
+                "project_name": project_name or "",
+                "date": expense_date or "",
+            },
+        ))
+
     return f"💰 Расход #{eid} записан: {amount} {currency}{project_str}{desc_str}"
 
 

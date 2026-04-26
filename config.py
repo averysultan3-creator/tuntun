@@ -68,4 +68,13 @@ LOGS_DIR = BASE_DIR / "logs"
 STORAGE_DIRS = [STORAGE_DIR, PHOTOS_DIR, VOICE_DIR, DOCUMENTS_DIR, EXPORTS_DIR, BACKUPS_DIR, LOGS_DIR]
 
 MIN_CONFIDENCE: float = 0.65
+
+# ── Google Integration (optional) ────────────────────────────────────────────
+GOOGLE_ENABLED: bool = os.getenv("GOOGLE_ENABLED", "false").lower() == "true"
+GOOGLE_SERVICE_ACCOUNT_FILE: str = os.getenv(
+    "GOOGLE_SERVICE_ACCOUNT_FILE", "credentials/google_service_account.json"
+)
+GOOGLE_SPREADSHEET_ID: str = os.getenv("GOOGLE_SPREADSHEET_ID", "")
+GOOGLE_DRIVE_ROOT_FOLDER_ID: str = os.getenv("GOOGLE_DRIVE_ROOT_FOLDER_ID", "")
+GOOGLE_SYNC_MODE: str = os.getenv("GOOGLE_SYNC_MODE", "local_first")
 DESTRUCTIVE_INTENTS: set = {"task_delete", "section_delete", "memory_clear"}

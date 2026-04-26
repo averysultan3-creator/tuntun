@@ -173,6 +173,10 @@ _LAZY_HANDLERS = {
     "backup_create": ("bot.modules.backup", "handle_create"),
     "analytics_query": ("bot.modules.analytics", "handle_query"),
     "menu_show": ("bot.modules.menu", "handle_show"),
+    # Google integration
+    "google_connect": ("bot.modules.google_handler", "handle_connect"),
+    "google_show_link": ("bot.modules.google_handler", "handle_show_link"),
+    "google_sync_now": ("bot.modules.google_handler", "handle_sync_now"),
 }
 
 

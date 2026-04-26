@@ -12,6 +12,19 @@ async def handle_save(user_id: int, params: dict, ai_response: str, **kwargs) ->
 
     mid = await db.memory_save(user_id, category, value, key_name)
     cat_str = f" в категорию «{category}»" if category != "general" else ""
+
+    # Google Sheets sync (non-blocking)
+    import asyncio
+    import config as _cfg
+    if _cfg.GOOGLE_ENABLED:
+        from bot.integrations.google.sync import sync_object_to_google
+        asyncio.create_task(sync_object_to_google(
+            user_id=user_id,
+            object_type="memory",
+            object_id=mid,
+            payload={"category": category, "key_name": key_name or "", "value": value},
+        ))
+
     return f"🧠 Запомнил{cat_str}: {value} #{mid}"
 
 

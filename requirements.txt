@@ -7,3 +7,7 @@ pytz>=2024.1
 aiofiles>=23.1.0
 openpyxl>=3.1.0
 python-dateutil>=2.8.0
+
+# Google integration (optional — only needed when GOOGLE_ENABLED=true)
+google-api-python-client>=2.100.0
+google-auth>=2.23.0

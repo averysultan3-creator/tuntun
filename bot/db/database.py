@@ -213,6 +213,38 @@ _CREATE_SQL = [
         suggested_actions TEXT,
         created_at TEXT DEFAULT (datetime('now'))
     )""",
+    # Google sync queue — pending operations when Google API is unavailable
+    """CREATE TABLE IF NOT EXISTS google_sync_queue (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        object_type TEXT NOT NULL,
+        object_id INTEGER,
+        target TEXT NOT NULL,
+        action TEXT NOT NULL,
+        payload_json TEXT,
+        status TEXT DEFAULT 'pending',
+        error_text TEXT,
+        retry_count INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now'))
+    )""",
+    # Google links — maps local objects to their Google counterparts
+    """CREATE TABLE IF NOT EXISTS google_links (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        object_type TEXT NOT NULL,
+        object_id INTEGER,
+        google_type TEXT NOT NULL,
+        spreadsheet_id TEXT,
+        sheet_name TEXT,
+        row_number INTEGER,
+        doc_id TEXT,
+        drive_file_id TEXT,
+        url TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now')),
+        UNIQUE(user_id, object_type, object_id, google_type)
+    )""",
 ]
 
 
@@ -966,6 +998,85 @@ class Database:
         await self._execute(
             "UPDATE attachments SET vision_summary=? WHERE id=?",
             (vision_summary, attachment_id),
+        )
+
+    # ===== GOOGLE SYNC QUEUE =====
+
+    async def google_sync_enqueue(self, user_id: int, object_type: str, object_id: int,
+                                   target: str, action: str, payload: dict) -> int:
+        return await self._execute(
+            """INSERT INTO google_sync_queue
+               (user_id, object_type, object_id, target, action, payload_json, status)
+               VALUES (?,?,?,?,?,?,?)""",
+            (user_id, object_type, object_id, target, action, json.dumps(payload, ensure_ascii=False), "pending"),
+        )
+
+    async def google_sync_pending(self, limit: int = 20) -> list:
+        return await self._fetchall(
+            "SELECT * FROM google_sync_queue WHERE status='pending' ORDER BY created_at LIMIT ?",
+            (limit,),
+        )
+
+    async def google_sync_mark_done(self, row_id: int):
+        await self._execute(
+            "UPDATE google_sync_queue SET status='done', updated_at=datetime('now') WHERE id=?",
+            (row_id,),
+        )
+
+    async def google_sync_mark_error(self, row_id: int, error: str, retry_count: int):
+        status = "error" if retry_count >= 3 else "pending"
+        await self._execute(
+            """UPDATE google_sync_queue SET status=?, error_text=?, retry_count=?,
+               updated_at=datetime('now') WHERE id=?""",
+            (status, error[:500], retry_count, row_id),
+        )
+
+    # ===== GOOGLE LINKS =====
+
+    async def google_link_save(self, user_id: int, object_type: str, object_id: int,
+                                google_type: str, url: str,
+                                spreadsheet_id: str = None, sheet_name: str = None,
+                                row_number: int = None, doc_id: str = None,
+                                drive_file_id: str = None):
+        await self._execute(
+            """INSERT INTO google_links
+               (user_id, object_type, object_id, google_type, spreadsheet_id, sheet_name,
+                row_number, doc_id, drive_file_id, url, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now'))
+               ON CONFLICT(user_id, object_type, object_id, google_type)
+               DO UPDATE SET url=excluded.url, spreadsheet_id=excluded.spreadsheet_id,
+                 sheet_name=excluded.sheet_name, row_number=excluded.row_number,
+                 doc_id=excluded.doc_id, drive_file_id=excluded.drive_file_id,
+                 updated_at=datetime('now')""",
+            (user_id, object_type, object_id, google_type, spreadsheet_id, sheet_name,
+             row_number, doc_id, drive_file_id, url),
+        )
+
+    async def google_link_get(self, user_id: int, object_type: str,
+                               object_id: int = None) -> list:
+        if object_id is not None:
+            return await self._fetchall(
+                "SELECT * FROM google_links WHERE user_id=? AND object_type=? AND object_id=?",
+                (user_id, object_type, object_id),
+            )
+        return await self._fetchall(
+            "SELECT * FROM google_links WHERE user_id=? AND object_type=?",
+            (user_id, object_type),
+        )
+
+    async def google_spreadsheet_get(self, user_id: int) -> str | None:
+        """Return the spreadsheet ID for this user (stored in settings)."""
+        row = await self._fetchone(
+            "SELECT value FROM settings WHERE user_id=? AND key='google_spreadsheet_id'",
+            (user_id,),
+        )
+        return row["value"] if row else None
+
+    async def google_spreadsheet_set(self, user_id: int, spreadsheet_id: str):
+        await self._execute(
+            """INSERT INTO settings (user_id, key, value) VALUES (?,?,?)
+               ON CONFLICT(user_id, key) DO UPDATE SET value=excluded.value""",
+            (user_id, "google_spreadsheet_id", spreadsheet_id),
         )
 
 
