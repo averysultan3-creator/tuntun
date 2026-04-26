@@ -12,53 +12,37 @@ cd /d "%~dp0"
 if not exist "logs" mkdir "logs"
 
 :: ================================================================
-:: 1. PYTHON DETECTION
+:: 1. PYTHON — ищем везде через PowerShell
 :: ================================================================
 set "PYTHON="
 
-:: Check .env override first (even before .env check, just scan the file)
+:: Сначала проверяем PYTHON_EXE в .env
 if exist ".env" (
     for /f "usebackq tokens=1,* delims==" %%a in (".env") do (
         if "%%a"=="PYTHON_EXE" set "PYTHON=%%b"
     )
 )
 
+:: Ищем python.exe во всех профилях и стандартных местах
 if not defined PYTHON (
-    if exist ".venv\Scripts\python.exe"                                              set "PYTHON=%~dp0.venv\Scripts\python.exe"
+    for /f "usebackq delims=" %%p in (`powershell -NoProfile -Command "$paths = @('C:\Python312\python.exe','C:\Python311\python.exe','C:\Python310\python.exe') + (Get-ChildItem 'C:\Users\*\AppData\Local\Programs\Python\*\python.exe' -ErrorAction SilentlyContinue ^| Select-Object -ExpandProperty FullName); $found = $paths ^| Where-Object { Test-Path $_ } ^| Select-Object -First 1; if ($found) { $found } else { '' }" 2^>nul`) do (
+        if not "%%p"=="" set "PYTHON=%%p"
+    )
 )
-if not defined PYTHON (
-    if exist "C:\Users\Sasha\AppData\Local\Programs\Python\Python312\python.exe"    set "PYTHON=C:\Users\Sasha\AppData\Local\Programs\Python\Python312\python.exe"
-)
-if not defined PYTHON (
-    if exist "C:\Users\Sasha\AppData\Local\Programs\Python\Python311\python.exe"    set "PYTHON=C:\Users\Sasha\AppData\Local\Programs\Python\Python311\python.exe"
-)
-if not defined PYTHON (
-    if exist "C:\Users\Sasha\AppData\Local\Programs\Python\Python310\python.exe"    set "PYTHON=C:\Users\Sasha\AppData\Local\Programs\Python\Python310\python.exe"
-)
-if not defined PYTHON (
-    if exist "%LOCALAPPDATA%\Programs\Python\Python312\python.exe"                  set "PYTHON=%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
-)
-if not defined PYTHON (
-    if exist "C:\Python312\python.exe"   set "PYTHON=C:\Python312\python.exe"
-)
-if not defined PYTHON (
-    if exist "C:\Python311\python.exe"   set "PYTHON=C:\Python311\python.exe"
-)
-if not defined PYTHON (
-    if exist "C:\Python310\python.exe"   set "PYTHON=C:\Python310\python.exe"
-)
+
+:: Последний вариант — python из PATH
 if not defined PYTHON (
     where python >nul 2>&1
     if not errorlevel 1 set "PYTHON=python"
 )
 
 if not defined PYTHON (
-    echo [ERROR] Python не найден!
-    echo         Добавь в .env строку: PYTHON_EXE=C:\путь\к\python.exe
+    echo.
+    echo [ERROR] Python не найден! Установи с https://python.org
+    echo         Или добавь в .env: PYTHON_EXE=C:\путь\к\python.exe
     pause
     exit /b 1
 )
-
 echo [OK] Python: %PYTHON%
 
 :: ================================================================
@@ -66,17 +50,12 @@ echo [OK] Python: %PYTHON%
 :: ================================================================
 if not exist ".env" (
     echo.
-    echo ============================================================
-    echo   [СТОП] Файл .env не найден!
-    echo.
-    echo   Скопируй файл .env со своего компа в эту папку:
-    echo   %~dp0.env
-    echo.
-    echo   Это нужно сделать ОДИН РАЗ. После этого всё будет работать.
-    echo ============================================================
+    echo [СТОП] Файл .env не найден в папке: %~dp0
+    echo        Скопируй .env из D:\AackREF\TUNTUN\.env сюда.
     pause
     exit /b 1
 )
+echo [OK] .env найден
 
 :: ================================================================
 :: 3. GIT PULL
@@ -84,11 +63,11 @@ if not exist ".env" (
 echo.
 echo [GIT] Обновляем код...
 where git >nul 2>&1
-if errorlevel 1 (
-    echo [WARN] git не найден — работаем с текущим кодом
-) else (
+if not errorlevel 1 (
     git config pull.rebase false >nul 2>&1
-    git pull origin main 2>&1
+    git pull origin main
+) else (
+    echo [WARN] git не найден — пропускаем pull
 )
 
 :: ================================================================
@@ -96,55 +75,46 @@ if errorlevel 1 (
 :: ================================================================
 echo.
 echo [PIP] Устанавливаем зависимости...
-"%PYTHON%" -m pip install --quiet --upgrade pip >nul 2>&1
-"%PYTHON%" -m pip install --quiet -r requirements.txt
-if errorlevel 1 (
-    echo [WARN] pip: возможны ошибки — продолжаем...
-)
+"%PYTHON%" -m pip install -q --upgrade pip >nul 2>&1
+"%PYTHON%" -m pip install -q -r requirements.txt
+if errorlevel 1 echo [WARN] pip: некоторые пакеты не установились
 
 :: ================================================================
 :: 5. INIT DB
 :: ================================================================
 echo.
-echo [DB] Инициализация базы данных...
+echo [DB] Инициализация БД...
 "%PYTHON%" main.py --init-db
 if errorlevel 1 (
-    echo [ERROR] --init-db завершился с ошибкой!
+    echo [ERROR] --init-db упал!
     pause
     exit /b 1
 )
 
 :: ================================================================
-:: 6. STOP OLD INSTANCE
+:: 6. RESTART BOT
 :: ================================================================
 echo.
-echo [BOT] Останавливаем старый процесс (если есть)...
+echo [BOT] Перезапуск...
 "%PYTHON%" run_background.py stop >nul 2>&1
 timeout /t 2 /nobreak >nul
-
-:: ================================================================
-:: 7. START BOT
-:: ================================================================
-echo [BOT] Запускаем...
 "%PYTHON%" run_background.py start
 if errorlevel 1 (
-    echo [ERROR] Не удалось запустить бота!
+    echo [ERROR] Бот не запустился!
     pause
     exit /b 1
 )
+echo [OK] Бот запущен
 
 :: ================================================================
-:: 8. LIVE LOGS
+:: 7. LIVE LOGS
 :: ================================================================
 echo.
 echo ============================================================
-echo   Бот запущен. Логи в реальном времени ниже.
-echo   Ctrl+C = остановить просмотр логов (бот продолжит работать)
-echo   Для полной остановки: stop.bat
+echo   Логи в реальном времени. Ctrl+C = выйти (бот работает).
 echo ============================================================
 echo.
 
-:: Wait for log file to be created
 :waitlog
 if not exist "logs\runtime.log" (
     timeout /t 1 /nobreak >nul
@@ -154,5 +124,5 @@ if not exist "logs\runtime.log" (
 powershell -NoProfile -Command "Get-Content 'logs\runtime.log' -Wait -Tail 50"
 
 echo.
-echo [INFO] Просмотр логов остановлен. Бот продолжает работать в фоне.
+echo Бот работает в фоне. Для остановки: stop.bat
 pause
