@@ -24,7 +24,22 @@ from openai import AsyncOpenAI
 import config
 from bot.ai.model_router import get_model, choose_model, should_use_reasoning
 from bot.db.database import db
-from bot.modules.memory_retriever import retrieve_context
+from bot.modules.memory_retriever import retrieve_context, retrieve_brain_context
+
+
+_MEMORY_QUERY_MARKERS = (
+    "что я говорил", "что ты помнишь", "что помнишь", "помнишь ли",
+    "что я писал", "что было по", "что у меня по", "найди в памяти",
+    "расскажи о моём", "расскажи про мой", "история по", "что я тратил",
+    "сколько потратил", "мои расходы", "мои траты", "по теме",
+    "что я думал", "мои идеи по", "мои задачи по", "напомни о",
+)
+
+
+def _is_memory_query(text: str) -> bool:
+    """Return True when the query explicitly asks about stored personal data."""
+    t = text.lower()
+    return any(m in t for m in _MEMORY_QUERY_MARKERS)
 
 
 def _build_capabilities_text() -> str:
@@ -43,17 +58,18 @@ def _build_capabilities_text() -> str:
 
 
 _IDENTITY = """Ты — TUNTUN, персональный AI-ассистент пользователя в Telegram.
-Ты работаешь как личная операционная система:
-память, задачи, напоминания, базы данных, финансы, учёба, проекты, расписание,
-планирование, голос, фото, Excel, backup, аналитика.
+Работай как личный ChatGPT внутри бота: умный собеседник, помощник по делам и
+операционная система для памяти, задач, напоминаний, баз данных, финансов,
+учёбы, проектов, расписания, голоса, фото, Excel, backup и аналитики.
 
-Ты не просто отвечаешь на вопросы.
-Ты помогаешь пользователю организовывать жизнь, задачи, данные и проекты.
-
-Твоя задача: понять сообщение → найти нужные данные → ответить как умный ассистент
-→ предложить следующий полезный шаг → не фантазировать → не удалять без уверенности.
-
-Отвечаешь только на русском. Коротко, конкретно, без воды."""
+Главные правила общения:
+• держи контекст обсуждения и связывай короткие реплики с предыдущими сообщениями;
+• сначала пытайся понять намерение пользователя сам, не задавай очевидные вопросы;
+• если есть разумное предположение — ответь по нему и коротко обозначь допущение;
+• если данных не хватает, задай один точный вопрос, а не список вопросов;
+• не предлагай случайные идеи ради активности, продолжай линию разговора;
+• для личных данных используй только сохранённый контекст, не выдумывай записи;
+• отвечай живо, по-человечески, только на русском, без канцелярита и воды."""
 
 _chat_client: AsyncOpenAI | None = None
 
@@ -65,7 +81,7 @@ def _get_client() -> AsyncOpenAI:
     return _chat_client
 
 
-async def _get_recent_conversation(user_id: int, limit: int = 5) -> list[dict]:
+async def _get_recent_conversation(user_id: int, limit: int = 10) -> list[dict]:
     """Fetch recent message log as OpenAI messages format."""
     try:
         rows = await db.message_logs_recent(user_id, limit=limit)
@@ -76,7 +92,7 @@ async def _get_recent_conversation(user_id: int, limit: int = 5) -> list[dict]:
             if user_text:
                 messages.append({"role": "user", "content": user_text})
             if bot_text:
-                messages.append({"role": "assistant", "content": bot_text[:400]})
+                messages.append({"role": "assistant", "content": bot_text[:1200]})
         return messages
     except Exception:
         return []
@@ -148,6 +164,7 @@ async def handle_chat_response(
         or is_data_query
         or refers_to_previous
         or needs_reasoning
+        or not intents
     )
     context_parts: list[str] = []
     try:
@@ -159,6 +176,26 @@ async def handle_chat_response(
             context_parts.append(base_ctx)
     except Exception as e:
         logging.warning("handle_chat_response: context error: %s", e)
+
+    # ── 2b. Brain context (memory_items — V2 brain index) ────────────────
+    # Injected when the query is about stored personal data / history.
+    # Bounded: max_items=10, max_chars=2200.  No OpenAI calls.
+    _needs_brain_ctx = (
+        is_data_query
+        or needs_retrieval
+        or refers_to_previous
+        or needs_reasoning
+        or _is_memory_query(question)
+    )
+    if _needs_brain_ctx:
+        try:
+            brain_ctx = await retrieve_brain_context(
+                user_id, question, max_items=10, max_chars=2200,
+            )
+            if brain_ctx:
+                context_parts.append(brain_ctx)
+        except Exception as _bce:
+            logging.warning("handle_chat_response: brain context error: %s", _bce)
 
     if context_parts:
         system_parts.append("\n--- Данные пользователя ---\n" + "\n".join(context_parts))
@@ -184,8 +221,9 @@ async def handle_chat_response(
     system = "\n".join(system_parts)
 
     # ── 3. Conversation history ───────────────────────────────────────────
-    # Deeper context for reasoning tasks, otherwise keep short (3 turns).
-    _hist_limit = 5 if (needs_reasoning or refers_to_previous) else 3
+    # Keep enough dialogue so short follow-ups like "а почему?" or "сделай лучше"
+    # still have the thread that the user expects from a personal ChatGPT-style bot.
+    _hist_limit = 14 if (needs_reasoning or refers_to_previous) else 10
     history = await _get_recent_conversation(user_id, limit=_hist_limit)
 
     messages = [{"role": "system", "content": system}]
@@ -206,8 +244,8 @@ async def handle_chat_response(
         resp = await _get_client().chat.completions.create(
             model=model,
             messages=messages,
-            temperature=0.4,
-            max_completion_tokens=800,
+            temperature=0.55,
+            max_completion_tokens=1400,
         )
         return resp.choices[0].message.content.strip()
     except Exception as e:
