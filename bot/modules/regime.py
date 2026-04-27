@@ -119,6 +119,22 @@ async def handle_day_plan(user_id: int, params: dict, ai_response: str, **kwargs
     }
     await db.plan_save(user_id, plan_date, plan_data)
 
+    # Memory V2 index (non-blocking)
+    import asyncio as _asyncio
+    from bot.modules.memory_indexer import index_memory_item as _idx_plan
+    _plan_lines = [b["time"] + " " + b["text"] for b in timed] + [b["text"] for b in flexible]
+    _plan_content = f"План на {plan_date}:\n" + "\n".join(_plan_lines) if _plan_lines else f"План на {plan_date}"
+    _asyncio.create_task(_idx_plan(
+        user_id=user_id,
+        content=_plan_content,
+        source_type="plan",
+        source_id=plan_date,
+        category="plan",
+        source_title=f"День {plan_date}",
+        source_date=plan_date,
+        importance=3,
+    ))
+
     # Save plan in conversation_state for contextual follow-ups ("перенеси завтрак", "убери обед")
     await db.conversation_state_update(
         user_id,

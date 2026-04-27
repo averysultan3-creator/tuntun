@@ -51,6 +51,19 @@ async def handle_expense_add(user_id: int, params: dict, ai_response: str, **kwa
         date=expense_date,
     )
 
+    # Memory V2 index (non-blocking)
+    import asyncio as _asyncio
+    from bot.modules.memory_indexer import index_finance_record as _idx_fin
+    _asyncio.create_task(_idx_fin(
+        user_id=user_id,
+        expense_id=eid,
+        amount=float(amount),
+        currency=currency,
+        description=description,
+        project_name=project_name,
+        date=expense_date,
+    ))
+
     project_str = f" [{project_name}]" if project_name else ""
     desc_str = f" — {description}" if description else ""
 

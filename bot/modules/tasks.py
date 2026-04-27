@@ -17,6 +17,18 @@ async def handle_create(user_id: int, params: dict, ai_response: str, **kwargs) 
         due_time=params.get("due_time"),
     )
 
+    # Memory V2 index (non-blocking)
+    import asyncio as _asyncio
+    from bot.modules.memory_indexer import index_task as _idx_task
+    _asyncio.create_task(_idx_task(
+        user_id=user_id,
+        task_id=task_id,
+        title=title,
+        description=params.get("description"),
+        due_date=params.get("due_date"),
+        priority=params.get("priority", "normal"),
+    ))
+
     due_str = ""
     if params.get("due_date"):
         try:

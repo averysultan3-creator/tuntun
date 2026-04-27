@@ -61,6 +61,20 @@ async def handle_save(user_id: int, params: dict, ai_response: str,
         source_message_id=source_message_id,
     )
 
+    # Memory V2 index (non-blocking)
+    import asyncio as _asyncio
+    from bot.modules.memory_indexer import index_memory_item as _idx_idea
+    _idea_content = f"{title}\n{description}".strip() if description else title
+    _asyncio.create_task(_idx_idea(
+        user_id=user_id,
+        content=_idea_content,
+        source_type="idea",
+        source_id=str(idea_id),
+        category="idea",
+        source_title=title,
+        importance=3,
+    ))
+
     # Save in conversation state for "сделай это задачей" follow-up
     await db.conversation_state_update(
         user_id,

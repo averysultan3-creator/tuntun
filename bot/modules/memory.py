@@ -13,6 +13,14 @@ async def handle_save(user_id: int, params: dict, ai_response: str, **kwargs) ->
     mid = await db.memory_save(user_id, category, value, key_name)
     cat_str = f" в категорию «{category}»" if category != "general" else ""
 
+    # Memory V2 index (non-blocking)
+    import asyncio as _asyncio
+    from bot.modules.memory_indexer import index_explicit_memory as _idx_mem
+    _asyncio.create_task(_idx_mem({
+        "id": mid, "user_id": user_id, "value": value,
+        "category": category, "key_name": key_name,
+    }))
+
     # Google Sheets sync (non-blocking)
     import asyncio
     import config as _cfg

@@ -102,6 +102,17 @@ async def handle_photo(message: Message, scheduler=None):
                     # Brief summary on attachment for quick retrieval
                     await db.attachment_update_vision(att_id, vision_result.get("summary", ""))
 
+                    # Memory V2 index (non-blocking)
+                    import asyncio as _asyncio
+                    from bot.modules.memory_indexer import index_vision_result as _idx_vis
+                    _asyncio.create_task(_idx_vis(
+                        user_id=user_id,
+                        attachment_id=att_id,
+                        summary=vision_result.get("summary", ""),
+                        extracted_text=vision_result.get("extracted_text"),
+                        photo_type=vision_result.get("photo_type"),
+                    ))
+
                     # Re-sync attachment to Google now that we have vision_summary
                     if config.GOOGLE_ENABLED:
                         import asyncio as _asyncio

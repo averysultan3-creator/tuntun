@@ -118,6 +118,16 @@ async def handle_voice(message: Message, state: FSMContext, scheduler=None):
         await message.answer("❌ Не смог распознать. Попробуй ещё раз.")
         return
 
+    # Memory V2 index (non-blocking)
+    import asyncio as _asyncio
+    from bot.modules.memory_indexer import index_voice_transcript as _idx_voice
+    _asyncio.create_task(_idx_voice(
+        user_id=message.from_user.id,
+        attachment_id=None,
+        transcript=text,
+        source_url=local_path,
+    ))
+
     await _process_text(message, text, state, scheduler, message_type="voice",
                         transcription=text)
 

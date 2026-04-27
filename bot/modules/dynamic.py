@@ -77,6 +77,17 @@ async def handle_record_add(user_id: int, params: dict, ai_response: str, **kwar
 
     rid = await db.section_record_add(user_id, section["name"], data)
     data_str = ", ".join(f"{k}: {v}" for k, v in data.items() if v)
+
+    # Memory V2 index (non-blocking)
+    import asyncio as _asyncio
+    from bot.modules.memory_indexer import index_dynamic_record as _idx_dyn
+    _asyncio.create_task(_idx_dyn(
+        user_id=user_id,
+        record_id=rid,
+        section_name=section["title"],
+        data=data_str or str(data),
+    ))
+
     return f"📝 Запись добавлена в «{section['title']}»:\n{data_str}\n#{rid}"
 
 

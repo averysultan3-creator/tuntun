@@ -36,6 +36,16 @@ async def handle_create(user_id: int, params: dict, ai_response: str, **kwargs) 
         interval_minutes=int(interval_minutes) if interval_minutes else None,
     )
 
+    # Memory V2 index (non-blocking)
+    import asyncio as _asyncio
+    from bot.modules.memory_indexer import index_reminder as _idx_rem
+    _asyncio.create_task(_idx_rem(
+        user_id=user_id,
+        reminder_id=rid,
+        text=text,
+        remind_at=remind_at_clean,
+    ))
+
     job_id = sched_module.add_reminder_job(
         reminder_id=rid, user_id=user_id, text=text,
         remind_at_str=remind_at_clean, recurring=recurring,
