@@ -774,3 +774,119 @@ if __name__ == "__main__":
     import pytest
     pytest.main([__file__, "-v"])
 
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Phase 1 micro-fix tests: active_object context + corrupted pending JSON
+# ═════════════════════════════════════════════════════════════════════════════
+
+def test_new_photo_sets_active_attachment_context():
+    """After new photo, conversation state must reflect new attachment as active object."""
+    mock_db = _AsyncDB()
+    old_actions = [{"intent": "expense_add", "params": {"amount": 10}}]
+    from datetime import datetime as dt, timedelta as td
+    old_expires = (dt.now() + td(minutes=20)).isoformat(sep=" ", timespec="seconds")
+
+    async def run():
+        # Seed: old active context (e.g. task)
+        await mock_db.conversation_state_update(
+            5,
+            active_topic="task",
+            active_object_type="task",
+            active_object_id=42,
+            last_photo_id=7,
+            pending_vision_actions_json=json.dumps(old_actions),
+            pending_vision_expires_at=old_expires,
+        )
+        # New photo: simulate what photo.py does after attachment_save
+        new_att_id = await mock_db.attachment_save(5, "photo", "AgNEW", "/tmp/new.jpg")
+        await mock_db.conversation_state_update(
+            5,
+            active_topic="photo",
+            active_object_type="attachment",
+            active_object_id=new_att_id,
+            last_photo_id=new_att_id,
+            last_user_message="[фото]",
+            pending_vision_actions_json=None,
+            pending_vision_expires_at=None,
+        )
+        return await mock_db.conversation_state_get(5), new_att_id
+
+    state, new_att_id = asyncio.run(run())
+    assert state["active_topic"] == "photo"
+    assert state["active_object_type"] == "attachment"
+    assert state["active_object_id"] == new_att_id
+    assert state["last_photo_id"] == new_att_id
+    assert state.get("pending_vision_actions_json") is None
+    assert state.get("pending_vision_expires_at") is None
+
+
+def test_corrupted_pending_json_consumes_yes(monkeypatch):
+    """Corrupted JSON in pending + 'да' -> consumed (True), no dispatch, pending cleared."""
+    from datetime import datetime as dt, timedelta as td
+    import bot.handlers.message as msg_mod
+    import bot.db.database as db_mod
+    import sys
+
+    expires = (dt.now() + td(minutes=20)).isoformat(sep=" ", timespec="seconds")
+    mock_db = _make_state_db({
+        "active_topic": "photo",
+        "pending_vision_actions_json": "{bad json!!!",
+        "pending_vision_expires_at": expires,
+    })
+    monkeypatch.setattr(db_mod, "db", mock_db)
+    monkeypatch.setattr(msg_mod, "db", mock_db)
+
+    dispatched = []
+
+    async def _fake_dispatch(actions, user_id, ai_reply, scheduler, bot, confidence):
+        dispatched.extend(actions)
+        return "nope"
+
+    fd = types.ModuleType("bot.modules.dispatcher")
+    fd.dispatch_actions = _fake_dispatch
+    monkeypatch.setitem(sys.modules, "bot.modules.dispatcher", fd)
+
+    msg = _FakeMessage("да", user_id=99)
+    result = asyncio.run(msg_mod._check_pending_vision_actions(msg, scheduler=None))
+
+    assert result is True, "Corrupted JSON must be consumed"
+    assert len(dispatched) == 0
+    final = asyncio.run(mock_db.conversation_state_get(99))
+    assert final.get("pending_vision_actions_json") is None
+    assert final.get("pending_vision_expires_at") is None
+
+
+def test_empty_pending_actions_consumes_yes(monkeypatch):
+    """Empty list [] in pending + 'да' -> consumed (True), not sent to classify."""
+    from datetime import datetime as dt, timedelta as td
+    import bot.handlers.message as msg_mod
+    import bot.db.database as db_mod
+    import sys
+
+    expires = (dt.now() + td(minutes=20)).isoformat(sep=" ", timespec="seconds")
+    mock_db = _make_state_db({
+        "active_topic": "photo",
+        "pending_vision_actions_json": "[]",
+        "pending_vision_expires_at": expires,
+    })
+    monkeypatch.setattr(db_mod, "db", mock_db)
+    monkeypatch.setattr(msg_mod, "db", mock_db)
+
+    dispatched = []
+
+    async def _fake_dispatch(actions, user_id, ai_reply, scheduler, bot, confidence):
+        dispatched.extend(actions)
+        return "nope"
+
+    fd = types.ModuleType("bot.modules.dispatcher")
+    fd.dispatch_actions = _fake_dispatch
+    monkeypatch.setitem(sys.modules, "bot.modules.dispatcher", fd)
+
+    msg = _FakeMessage("да", user_id=99)
+    result = asyncio.run(msg_mod._check_pending_vision_actions(msg, scheduler=None))
+
+    assert result is True, "Empty pending list must be consumed"
+    assert len(dispatched) == 0
+    final = asyncio.run(mock_db.conversation_state_get(99))
+    assert final.get("pending_vision_actions_json") is None
+

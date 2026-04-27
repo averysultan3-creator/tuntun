@@ -48,12 +48,15 @@ async def handle_photo(message: Message, scheduler=None):
             section_name=section_name,
         )
 
-        # ── Clear any stale pending vision from previous photo ────────────
-        # New photo always resets photo context; old pending must not survive.
+        # ── Set active attachment context + clear stale pending ─────────
+        # New photo always becomes the active object. Old pending must not survive.
         await db.conversation_state_update(
             user_id,
             active_topic="photo",
+            active_object_type="attachment",
+            active_object_id=att_id,
             last_photo_id=att_id,
+            last_user_message=caption or "[фото]",
             pending_vision_actions_json=None,
             pending_vision_expires_at=None,
         )

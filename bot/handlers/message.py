@@ -279,9 +279,29 @@ async def _check_pending_vision_actions(message: Message, scheduler) -> bool:
                 pass
             return True  # consumed
 
-        actions = _json.loads(pending_json)
-        if not actions:
-            return False
+        try:
+            actions = _json.loads(pending_json)
+        except Exception:
+            logging.warning(
+                "pending_vision: corrupted JSON for user %s, clearing", user_id
+            )
+            await db.conversation_state_update(
+                user_id,
+                pending_vision_actions_json=None,
+                pending_vision_expires_at=None,
+            )
+            return True  # consumed
+
+        if not actions or not isinstance(actions, list):
+            logging.warning(
+                "pending_vision: empty or non-list actions for user %s, clearing", user_id
+            )
+            await db.conversation_state_update(
+                user_id,
+                pending_vision_actions_json=None,
+                pending_vision_expires_at=None,
+            )
+            return True  # consumed
 
     except Exception:
         return False
