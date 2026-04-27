@@ -79,12 +79,36 @@ async def get_or_create_spreadsheet(title: str, user_id: int) -> Optional[str]:
         return None
 
     try:
-        body = {
-            "properties": {"title": title},
-            "sheets": [{"properties": {"title": sheet}} for sheet in _SHEET_HEADERS],
+        # Create via Drive API inside the shared root folder
+        from googleapiclient.discovery import build as _build
+        import config as _cfg
+        drive_svc = _build("drive", "v3", credentials=svc._http.credentials, cache_discovery=False)
+
+        # Create spreadsheet file in the shared folder
+        file_meta = {
+            "name": title,
+            "mimeType": "application/vnd.google-apps.spreadsheet",
         }
-        result = svc.spreadsheets().create(body=body, fields="spreadsheetId").execute()
-        sid = result["spreadsheetId"]
+        if _cfg.GOOGLE_DRIVE_ROOT_FOLDER_ID:
+            file_meta["parents"] = [_cfg.GOOGLE_DRIVE_ROOT_FOLDER_ID]
+        file_result = drive_svc.files().create(body=file_meta, fields="id").execute()
+        sid = file_result["id"]
+
+        # Add all sheet tabs
+        sheet_requests = []
+        for sheet_name in list(_SHEET_HEADERS.keys())[1:]:  # skip first (already exists as Sheet1)
+            sheet_requests.append({"addSheet": {"properties": {"title": sheet_name}}})
+        # Rename first sheet
+        meta = svc.spreadsheets().get(spreadsheetId=sid).execute()
+        first_sheet_id = meta["sheets"][0]["properties"]["sheetId"]
+        sheet_requests.insert(0, {
+            "updateSheetProperties": {
+                "properties": {"sheetId": first_sheet_id, "title": list(_SHEET_HEADERS.keys())[0]},
+                "fields": "title",
+            }
+        })
+        svc.spreadsheets().batchUpdate(spreadsheetId=sid, body={"requests": sheet_requests}).execute()
+
         await db.google_spreadsheet_set(user_id, sid)
         logging.info("Google Sheets: created spreadsheet %s for user %s", sid, user_id)
         return sid

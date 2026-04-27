@@ -4,6 +4,9 @@
 .env.server
 .env.production
 
+# ── Google Service Account credentials (contain private keys) ──────────────
+credentials/
+
 # ── Configured deployer (contains API keys — keep private) ─────────────────
 DEPLOY_CONFIGURED.bat
 
