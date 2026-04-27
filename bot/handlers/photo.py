@@ -108,6 +108,8 @@ async def handle_photo(message: Message, scheduler=None):
 
                     # Save pending actions to conversation_state for follow-up
                     actions = vision_result.get("suggested_actions") or []
+                    from datetime import datetime as _dt, timedelta as _td
+                    _expires = (_dt.now() + _td(minutes=30)).isoformat(sep=" ", timespec="seconds")
                     await db.conversation_state_update(
                         user_id,
                         active_topic="photo",
@@ -116,6 +118,7 @@ async def handle_photo(message: Message, scheduler=None):
                         last_photo_id=att_id,
                         last_user_message=caption or "[фото]",
                         pending_vision_actions_json=json.dumps(actions, ensure_ascii=False) if actions else None,
+                        pending_vision_expires_at=_expires if actions else None,
                     )
 
                     # Build and send reply

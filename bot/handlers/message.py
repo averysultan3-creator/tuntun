@@ -172,7 +172,7 @@ _DA_BLOCKLIST = frozenset({"дай", "данные", "давай", "дальше
 # ^да followed by punctuation/space/end-of-string
 import re as _re
 _DA_RE = _re.compile(r'^да([,.!?\s]|$)')
-# Max age (seconds) of pending_vision_actions to accept
+# Max age (seconds) of pending_vision_actions to accept (fallback when expires_at missing)
 _PENDING_TTL_SECONDS = 1800  # 30 minutes
 
 
@@ -226,21 +226,35 @@ async def _check_pending_vision_actions(message: Message, scheduler) -> bool:
         if not pending_json:
             return False
 
-        # TTL: ignore stale pending actions
-        updated_at_raw = state.get("updated_at")
-        if updated_at_raw:
+        # TTL: check dedicated expires_at field (NOT updated_at, which changes on every message)
+        expires_at_raw = state.get("pending_vision_expires_at")
+        if expires_at_raw:
             try:
-                updated_at = _dt.fromisoformat(str(updated_at_raw))
-                age = (_dt.now() - updated_at).total_seconds()
-                if age > _PENDING_TTL_SECONDS:
+                expires_at = _dt.fromisoformat(str(expires_at_raw))
+                if _dt.now() > expires_at:
                     await db.conversation_state_update(
                         user_id,
                         pending_vision_actions_json=None,
+                        pending_vision_expires_at=None,
                         active_topic=None,
                     )
+                    try:
+                        await message.answer(
+                            "⏱ Действие по фото устарело. Отправь фото ещё раз или напиши команду заново."
+                        )
+                    except Exception:
+                        pass
                     return False
             except Exception:
-                pass  # can't parse date — proceed
+                pass  # malformed date — proceed cautiously
+        else:
+            # Legacy pending without expires_at: treat as expired (safety-first)
+            await db.conversation_state_update(
+                user_id,
+                pending_vision_actions_json=None,
+                active_topic=None,
+            )
+            return False
 
         actions = _json.loads(pending_json)
         if not actions:
@@ -249,10 +263,11 @@ async def _check_pending_vision_actions(message: Message, scheduler) -> bool:
     except Exception:
         return False
 
-    # Clear pending actions regardless of confirm/cancel
+    # Clear pending vision state regardless of confirm/cancel
     await db.conversation_state_update(
         user_id,
         pending_vision_actions_json=None,
+        pending_vision_expires_at=None,
         active_topic=None,
     )
 

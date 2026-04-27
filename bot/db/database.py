@@ -187,6 +187,7 @@ _CREATE_SQL = [
         last_discussed_idea_ids TEXT,
         onboarding_step INTEGER DEFAULT 0,
         pending_vision_actions_json TEXT,
+        pending_vision_expires_at TEXT,
         updated_at TEXT DEFAULT (datetime('now'))
     )""",
     # Ideas — user ideas, attached to projects, can be converted to tasks
@@ -277,6 +278,7 @@ class Database:
             ],
             "conversation_state": [
                 ("pending_vision_actions_json", "TEXT"),
+                ("pending_vision_expires_at", "TEXT"),
                 ("last_photo_id", "INTEGER"),
             ],
             "vision_results": [
