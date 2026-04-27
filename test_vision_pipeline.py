@@ -591,8 +591,183 @@ def test_pending_vision_legacy_no_expires_at_treated_as_expired(monkeypatch):
     result = asyncio.run(msg_mod._check_pending_vision_actions(message, scheduler=None))
 
     assert len(dispatched) == 0, "Legacy pending without expires_at must not be dispatched"
+    # Returns True: consumed, NOT passed to classify/dispatcher
+    assert result is True, "Legacy pending must be consumed (return True), not fall through"
     final = asyncio.run(mock_db.conversation_state_get(99))
     assert final.get("pending_vision_actions_json") is None
+
+
+def test_expired_pending_consumes_yes(monkeypatch):
+    """Expired pending + 'да' -> returns True (consumed), no dispatch, pending cleared."""
+    from datetime import datetime as dt, timedelta as td
+    import bot.handlers.message as msg_mod
+    import bot.db.database as db_mod
+
+    expires = (dt.now() - td(minutes=5)).isoformat(sep=" ", timespec="seconds")
+    actions = [{"intent": "expense_add", "params": {"amount": 77}}]
+    mock_db = _make_state_db({
+        "active_topic": "photo",
+        "pending_vision_actions_json": json.dumps(actions),
+        "pending_vision_expires_at": expires,
+    })
+    monkeypatch.setattr(db_mod, "db", mock_db)
+    monkeypatch.setattr(msg_mod, "db", mock_db)
+
+    dispatched = []
+    async def _fake_dispatch(actions, user_id, ai_reply, scheduler, bot, confidence):
+        dispatched.extend(actions)
+        return "should not reach"
+    import sys
+    fd = types.ModuleType("bot.modules.dispatcher")
+    fd.dispatch_actions = _fake_dispatch
+    monkeypatch.setitem(sys.modules, "bot.modules.dispatcher", fd)
+
+    msg = _FakeMessage("да", user_id=99)
+    result = asyncio.run(msg_mod._check_pending_vision_actions(msg, scheduler=None))
+
+    assert result is True
+    assert len(dispatched) == 0
+    final = asyncio.run(mock_db.conversation_state_get(99))
+    assert final.get("pending_vision_actions_json") is None
+    assert final.get("pending_vision_expires_at") is None
+
+
+def test_legacy_pending_without_expires_consumes_yes(monkeypatch):
+    """Legacy pending (no expires_at) + 'да' -> returns True, no dispatch, cleared."""
+    import bot.handlers.message as msg_mod
+    import bot.db.database as db_mod
+
+    actions = [{"intent": "task_add", "params": {"title": "old task"}}]
+    mock_db = _make_state_db({
+        "active_topic": "photo",
+        "pending_vision_actions_json": json.dumps(actions),
+        # No expires_at
+    })
+    monkeypatch.setattr(db_mod, "db", mock_db)
+    monkeypatch.setattr(msg_mod, "db", mock_db)
+
+    dispatched = []
+    async def _fake_dispatch(actions, user_id, ai_reply, scheduler, bot, confidence):
+        dispatched.extend(actions)
+        return "nope"
+    import sys
+    fd = types.ModuleType("bot.modules.dispatcher")
+    fd.dispatch_actions = _fake_dispatch
+    monkeypatch.setitem(sys.modules, "bot.modules.dispatcher", fd)
+
+    msg = _FakeMessage("да", user_id=99)
+    result = asyncio.run(msg_mod._check_pending_vision_actions(msg, scheduler=None))
+
+    assert result is True
+    assert len(dispatched) == 0
+    final = asyncio.run(mock_db.conversation_state_get(99))
+    assert final.get("pending_vision_actions_json") is None
+
+
+def test_malformed_expires_consumes_yes(monkeypatch):
+    """Malformed expires_at + 'да' -> returns True, no dispatch, pending cleared, warning logged."""
+    import bot.handlers.message as msg_mod
+    import bot.db.database as db_mod
+
+    actions = [{"intent": "reminder_add", "params": {"text": "malformed test"}}]
+    mock_db = _make_state_db({
+        "active_topic": "photo",
+        "pending_vision_actions_json": json.dumps(actions),
+        "pending_vision_expires_at": "bad-date-xyz",
+    })
+    monkeypatch.setattr(db_mod, "db", mock_db)
+    monkeypatch.setattr(msg_mod, "db", mock_db)
+
+    dispatched = []
+    async def _fake_dispatch(actions, user_id, ai_reply, scheduler, bot, confidence):
+        dispatched.extend(actions)
+        return "nope"
+    import sys
+    fd = types.ModuleType("bot.modules.dispatcher")
+    fd.dispatch_actions = _fake_dispatch
+    monkeypatch.setitem(sys.modules, "bot.modules.dispatcher", fd)
+
+    msg = _FakeMessage("да", user_id=99)
+    result = asyncio.run(msg_mod._check_pending_vision_actions(msg, scheduler=None))
+
+    assert result is True
+    assert len(dispatched) == 0
+    final = asyncio.run(mock_db.conversation_state_get(99))
+    assert final.get("pending_vision_actions_json") is None
+    assert final.get("pending_vision_expires_at") is None
+
+
+def test_new_photo_clears_old_pending_if_vision_fails():
+    """New photo arrival must clear old pending even if vision returns no actions."""
+    mock_db = _AsyncDB()
+    old_actions = [{"intent": "expense_add", "params": {"amount": 50}}]
+    from datetime import datetime as dt, timedelta as td
+    old_expires = (dt.now() + td(minutes=20)).isoformat(sep=" ", timespec="seconds")
+
+    async def run():
+        # Seed old pending state
+        await mock_db.conversation_state_update(
+            10,
+            active_topic="photo",
+            last_photo_id=1,
+            pending_vision_actions_json=json.dumps(old_actions),
+            pending_vision_expires_at=old_expires,
+        )
+        # Simulate new photo arrival: clear old pending
+        await mock_db.conversation_state_update(
+            10,
+            active_topic="photo",
+            last_photo_id=2,
+            pending_vision_actions_json=None,
+            pending_vision_expires_at=None,
+        )
+        # Vision fails / no actions: don't set new pending
+        return await mock_db.conversation_state_get(10)
+
+    final = asyncio.run(run())
+    assert final.get("pending_vision_actions_json") is None
+    assert final.get("pending_vision_expires_at") is None
+    assert final.get("last_photo_id") == 2
+
+
+def test_new_photo_sets_new_pending_only_for_new_actions():
+    """New photo with vision result replaces old pending with new one."""
+    mock_db = _AsyncDB()
+    old_actions = [{"intent": "expense_add", "params": {"amount": 50}}]
+    new_actions = [{"intent": "task_add", "params": {"title": "Fix the roof"}}]
+    from datetime import datetime as dt, timedelta as td
+    old_expires = (dt.now() + td(minutes=20)).isoformat(sep=" ", timespec="seconds")
+    new_expires = (dt.now() + td(minutes=30)).isoformat(sep=" ", timespec="seconds")
+
+    async def run():
+        # Seed old pending state
+        await mock_db.conversation_state_update(
+            11,
+            active_topic="photo",
+            last_photo_id=3,
+            pending_vision_actions_json=json.dumps(old_actions),
+            pending_vision_expires_at=old_expires,
+        )
+        # New photo: first clear old pending
+        await mock_db.conversation_state_update(
+            11,
+            active_topic="photo",
+            last_photo_id=4,
+            pending_vision_actions_json=None,
+            pending_vision_expires_at=None,
+        )
+        # Vision succeeded: write new pending
+        await mock_db.conversation_state_update(
+            11,
+            pending_vision_actions_json=json.dumps(new_actions),
+            pending_vision_expires_at=new_expires,
+        )
+        return await mock_db.conversation_state_get(11)
+
+    final = asyncio.run(run())
+    stored = json.loads(final["pending_vision_actions_json"])
+    assert stored[0]["intent"] == "task_add", "Should have new action, not old"
+    assert final.get("last_photo_id") == 4
 
 
 if __name__ == "__main__":

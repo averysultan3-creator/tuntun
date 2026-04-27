@@ -240,21 +240,44 @@ async def _check_pending_vision_actions(message: Message, scheduler) -> bool:
                     )
                     try:
                         await message.answer(
-                            "⏱ Действие по фото устарело. Отправь фото ещё раз или напиши команду заново."
+                            "⏱ Действие по фото устарело. Напиши команду заново или отправь фото ещё раз."
                         )
                     except Exception:
                         pass
-                    return False
+                    return True  # consumed: don't send to classify
             except Exception:
-                pass  # malformed date — proceed cautiously
+                # Malformed expires_at: unsafe, clear and consume
+                logging.warning(
+                    "pending_vision: malformed expires_at %r for user %s, clearing",
+                    expires_at_raw, user_id,
+                )
+                await db.conversation_state_update(
+                    user_id,
+                    pending_vision_actions_json=None,
+                    pending_vision_expires_at=None,
+                    active_topic=None,
+                )
+                try:
+                    await message.answer(
+                        "⚠️ Старое действие по фото уже неактуально. Отправь фото ещё раз, если нужно."
+                    )
+                except Exception:
+                    pass
+                return True  # consumed
         else:
-            # Legacy pending without expires_at: treat as expired (safety-first)
+            # Legacy pending without expires_at: safety-first, consume without executing
             await db.conversation_state_update(
                 user_id,
                 pending_vision_actions_json=None,
                 active_topic=None,
             )
-            return False
+            try:
+                await message.answer(
+                    "ℹ️ Старое действие по фото уже неактуально. Отправь фото ещё раз, если нужно."
+                )
+            except Exception:
+                pass
+            return True  # consumed
 
         actions = _json.loads(pending_json)
         if not actions:

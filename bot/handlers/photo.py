@@ -48,6 +48,16 @@ async def handle_photo(message: Message, scheduler=None):
             section_name=section_name,
         )
 
+        # ── Clear any stale pending vision from previous photo ────────────
+        # New photo always resets photo context; old pending must not survive.
+        await db.conversation_state_update(
+            user_id,
+            active_topic="photo",
+            last_photo_id=att_id,
+            pending_vision_actions_json=None,
+            pending_vision_expires_at=None,
+        )
+
         # ── Google Drive sync (non-blocking) ───────────────────────────────────────
         if config.GOOGLE_ENABLED:
             import asyncio
