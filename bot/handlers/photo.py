@@ -1,3 +1,4 @@
+import json
 import logging
 from datetime import datetime
 
@@ -47,6 +48,22 @@ async def handle_photo(message: Message, scheduler=None):
             section_name=section_name,
         )
 
+        # ── Google Drive sync (non-blocking) ───────────────────────────────────────
+        if config.GOOGLE_ENABLED:
+            import asyncio
+            from bot.integrations.google.sync import sync_object_to_google
+            asyncio.create_task(sync_object_to_google(
+                user_id=user_id,
+                object_type="attachment",
+                object_id=att_id,
+                payload={
+                    "file_type": "photo",
+                    "local_path": str(local_path),
+                    "caption": caption,
+                    "section_name": section_name or "",
+                },
+            ))
+
         # ── Vision analysis (if enabled) ─────────────────────────────────
         if is_vision_enabled():
             await message.answer("🔍 Анализирую фото...")
@@ -72,6 +89,18 @@ async def handle_photo(message: Message, scheduler=None):
                     # Brief summary on attachment for quick retrieval
                     await db.attachment_update_vision(att_id, vision_result.get("summary", ""))
 
+                    # Save pending actions to conversation_state for follow-up
+                    actions = vision_result.get("suggested_actions") or []
+                    await db.conversation_state_update(
+                        user_id,
+                        active_topic="photo",
+                        active_object_type="attachment",
+                        active_object_id=att_id,
+                        last_photo_id=att_id,
+                        last_user_message=caption or "[фото]",
+                        pending_vision_actions_json=json.dumps(actions, ensure_ascii=False) if actions else None,
+                    )
+
                     # Build and send reply
                     reply = build_reply(vision_result, att_id, caption)
 
@@ -91,9 +120,15 @@ async def handle_photo(message: Message, scheduler=None):
                         await message.answer(reply)
                     return
 
+                else:
+                    # vision returned fallback (parse error) — still show something
+                    await message.answer("⚠️ Фото сохранил, но анализ не сработал.")
+                    return
+
             except Exception as e:
-                logging.error("Vision analysis error: %s", e)
-                await message.answer("⚠️ Не смог проанализировать фото. Фото сохранено.")
+                logging.error("Vision analysis error: %s", e, exc_info=True)
+                # Attachment already saved — report partial success
+                await message.answer("⚠️ Фото сохранил, но анализ не сработал.")
                 return
 
         # ── No vision: simple save confirmation ──────────────────────────

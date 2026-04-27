@@ -118,7 +118,6 @@ async def handle_voice(message: Message, state: FSMContext, scheduler=None):
         await message.answer("❌ Не смог распознать. Попробуй ещё раз.")
         return
 
-    await message.answer(f"🎙️ Распознал: _{text}_", parse_mode="Markdown")
     await _process_text(message, text, state, scheduler, message_type="voice",
                         transcription=text)
 
@@ -139,6 +138,11 @@ async def handle_text(message: Message, state: FSMContext, scheduler=None):
                 await message.answer(response)
         return
 
+    # ── Pending vision actions (after photo analysis) ───────────────────
+    handled = await _check_pending_vision_actions(message, scheduler)
+    if handled:
+        return
+
     # Check FSM state (section builder, etc.)
     current_state = await state.get_state()
     if current_state:
@@ -148,6 +152,88 @@ async def handle_text(message: Message, state: FSMContext, scheduler=None):
             return
 
     await _process_text(message, message.text, state, scheduler, message_type="text")
+
+
+_CONFIRM_WORDS = frozenset({
+    "да", "ок", "окей", "ладно", "давай", "сохрани", "запиши", "добавь",
+    "запиши в финансы", "сделай задачей", "добавь в учёбу", "выполни",
+    "подтверди", "yes", "ok", "sure",
+})
+_CANCEL_WORDS = frozenset({
+    "нет", "не надо", "отмена", "отменить", "cancel", "стоп", "stop",
+    "не сохраняй", "не добавляй",
+})
+
+
+async def _check_pending_vision_actions(message: Message, scheduler) -> bool:
+    """Check if user is responding to a pending vision suggestion.
+
+    Returns True if the message was handled (caller should return).
+    """
+    import json as _json
+    user_id = message.from_user.id
+    text = (message.text or "").strip().lower()
+
+    # Fast exit: only intercept short confirmation/cancellation phrases
+    is_confirm = text in _CONFIRM_WORDS or any(text.startswith(w) for w in _CONFIRM_WORDS)
+    is_cancel = text in _CANCEL_WORDS
+
+    if not (is_confirm or is_cancel):
+        return False
+
+    try:
+        state = await db.conversation_state_get(user_id)
+        if state.get("active_topic") != "photo":
+            return False
+
+        pending_json = state.get("pending_vision_actions_json")
+        if not pending_json:
+            return False
+
+        actions = _json.loads(pending_json)
+        if not actions:
+            return False
+
+    except Exception:
+        return False
+
+    # Clear pending actions regardless of confirm/cancel
+    await db.conversation_state_update(
+        user_id,
+        pending_vision_actions_json=None,
+        active_topic=None,
+    )
+
+    if is_cancel:
+        try:
+            await message.answer("Ок, не сохраняю.")
+        except Exception:
+            pass
+        return True
+
+    # Confirm → dispatch actions
+    try:
+        from bot.modules.dispatcher import dispatch_actions
+        response = await dispatch_actions(
+            actions=actions,
+            user_id=user_id,
+            ai_reply="",
+            scheduler=scheduler,
+            bot=message.bot,
+            confidence=0.9,
+        )
+        if response:
+            try:
+                await message.answer(response, parse_mode="Markdown")
+            except Exception:
+                await message.answer(response)
+        else:
+            await message.answer("✅ Готово.")
+    except Exception as e:
+        logging.error("pending_vision_actions dispatch error: %s", e, exc_info=True)
+        await message.answer("⚠️ Не удалось выполнить действие.")
+
+    return True
 
 
 async def _process_text(message: Message, text: str, state: FSMContext,

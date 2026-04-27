@@ -145,6 +145,7 @@ _CREATE_SQL = [
         caption TEXT,
         section_name TEXT,
         record_id INTEGER,
+        vision_summary TEXT,
         created_at TEXT DEFAULT (datetime('now'))
     )""",
     """CREATE TABLE IF NOT EXISTS exports_log (
@@ -185,6 +186,7 @@ _CREATE_SQL = [
         last_discussed_record_ids TEXT,
         last_discussed_idea_ids TEXT,
         onboarding_step INTEGER DEFAULT 0,
+        pending_vision_actions_json TEXT,
         updated_at TEXT DEFAULT (datetime('now'))
     )""",
     # Ideas — user ideas, attached to projects, can be converted to tasks
@@ -257,6 +259,60 @@ class Database:
             for sql in _CREATE_SQL:
                 await db.execute(sql)
             await db.commit()
+        await self.db_health_migrate()
+
+    async def db_health_migrate(self) -> dict:
+        """Safe migration: add missing columns to existing tables, log changes.
+
+        Never drops data. Safe to call on first run and on upgrades.
+        Returns dict with lists of created tables/columns.
+        """
+        import logging
+        report = {"tables_created": [], "columns_added": []}
+
+        # Required columns per table: {table: [(col, definition), ...]}
+        _REQUIRED_COLUMNS = {
+            "attachments": [
+                ("vision_summary", "TEXT"),
+            ],
+            "conversation_state": [
+                ("pending_vision_actions_json", "TEXT"),
+                ("last_photo_id", "INTEGER"),
+            ],
+            "vision_results": [
+                ("needs_confirmation", "INTEGER DEFAULT 1"),
+                ("error_text", "TEXT"),
+            ],
+            "google_sync_queue": [
+                ("updated_at", "TEXT DEFAULT (datetime('now'))"),
+            ],
+        }
+
+        async with aiosqlite.connect(self._path) as conn:
+            # 1. Ensure all tables exist (run CREATE TABLE IF NOT EXISTS)
+            for sql in _CREATE_SQL:
+                await conn.execute(sql)
+            await conn.commit()
+
+            # 2. Add missing columns
+            for table, columns in _REQUIRED_COLUMNS.items():
+                for col_name, col_def in columns:
+                    try:
+                        await conn.execute(
+                            f"ALTER TABLE {table} ADD COLUMN {col_name} {col_def}"
+                        )
+                        await conn.commit()
+                        msg = f"{table}.{col_name} ({col_def})"
+                        report["columns_added"].append(msg)
+                        logging.info("DB migrate: added column %s", msg)
+                    except Exception:
+                        pass  # column already exists — expected
+
+        if report["columns_added"]:
+            logging.info("DB health_migrate done: added columns %s", report["columns_added"])
+        else:
+            logging.debug("DB health_migrate: schema is up to date")
+        return report
 
     async def _execute(self, sql: str, params: tuple = ()) -> int:
         async with aiosqlite.connect(self._path) as db:
@@ -744,7 +800,7 @@ class Database:
             """SELECT id, message_type, original_text, bot_response, created_at
                FROM message_logs
                WHERE user_id=? AND original_text IS NOT NULL AND original_text != ''
-               ORDER BY created_at DESC LIMIT ?""",
+               ORDER BY created_at DESC, id DESC LIMIT ?""",
             (user_id, limit),
         )
 

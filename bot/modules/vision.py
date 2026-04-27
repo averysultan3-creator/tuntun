@@ -15,6 +15,7 @@ Public API:
 import base64
 import json
 import logging
+import re
 from pathlib import Path
 
 from openai import AsyncOpenAI
@@ -127,18 +128,88 @@ async def analyze_photo(
         )
 
         content = response.choices[0].message.content.strip()
-        # Strip any accidental markdown fences
-        import re
-        content = re.sub(r"```(?:json)?", "", content).strip().rstrip("`")
-        result = json.loads(content)
+        result = _parse_vision_json(content)
         return result
 
-    except json.JSONDecodeError as e:
-        logging.error("vision.analyze_photo: JSON parse error: %s", e)
-        return None
     except Exception as e:
         logging.error("vision.analyze_photo error (user=%s): %s", user_id, e)
-        return None
+        return _fallback_vision_result(f"API error: {type(e).__name__}")
+
+
+def _fallback_vision_result(reason: str = "") -> dict:
+    """Return a safe fallback dict when vision parsing fails."""
+    return {
+        "photo_type": "unknown",
+        "summary": "Не удалось проанализировать изображение",
+        "extracted_text": "",
+        "detected_entities": {},
+        "suggested_actions": [],
+        "needs_confirmation": True,
+        "error_text": reason[:300] if reason else "parse_failed",
+    }
+
+
+def _parse_vision_json(content: str) -> dict:
+    """Robustly parse vision model response.
+
+    Handles:
+    - Clean JSON
+    - JSON inside ```json ... ``` fences
+    - JSON with extra text before/after
+    - Partially broken JSON (returns fallback with raw summary)
+    """
+    if not content:
+        return _fallback_vision_result("empty response")
+
+    # Pass 1: direct parse
+    try:
+        result = json.loads(content)
+        if isinstance(result, dict):
+            return _normalise(result)
+    except json.JSONDecodeError:
+        pass
+
+    # Pass 2: strip markdown fences
+    cleaned = re.sub(r"```(?:json)?", "", content).strip().rstrip("`").strip()
+    try:
+        result = json.loads(cleaned)
+        if isinstance(result, dict):
+            return _normalise(result)
+    except json.JSONDecodeError:
+        pass
+
+    # Pass 3: extract first {...} block
+    match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+    if match:
+        try:
+            result = json.loads(match.group(0))
+            if isinstance(result, dict):
+                return _normalise(result)
+        except json.JSONDecodeError:
+            pass
+
+    # Pass 4: fallback — use the raw text as summary
+    logging.warning("vision: JSON parse failed, raw content: %s", content[:200])
+    fb = _fallback_vision_result("JSON parse failed")
+    # If the raw text looks like a real description, use it as summary
+    if len(content) > 10 and not content.startswith("{"):
+        fb["summary"] = content[:300]
+    return fb
+
+
+def _normalise(d: dict) -> dict:
+    """Ensure all expected keys exist with safe defaults."""
+    d.setdefault("photo_type", "unknown")
+    d.setdefault("summary", "")
+    d.setdefault("extracted_text", "")
+    d.setdefault("detected_entities", {})
+    d.setdefault("suggested_actions", [])
+    d.setdefault("needs_confirmation", True)
+    if not isinstance(d["suggested_actions"], list):
+        d["suggested_actions"] = []
+    if not isinstance(d["detected_entities"], dict):
+        d["detected_entities"] = {}
+    return d
 
 
 def build_reply(vision_result: dict, att_id: int, caption: str = "") -> str:
