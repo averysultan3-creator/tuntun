@@ -157,8 +157,11 @@ async def handle_chat_response(
         system_parts.append("\n--- Активный контекст ---\n" + context_state)
 
     # ── 2. User data context ──────────────────────────────────────────────
-    # Full retrieval (query-driven) only when truly needed to avoid wasted DB reads.
-    # For simple chat, base context (tasks, reminders) is enough.
+    # Strategy:
+    #   2a. Base context (tasks, reminders, projects, settings) — always, no query search.
+    #   2b. Brain context (V2, memory_items) — when query is about personal data/history.
+    #       Falls back to old retrieve_context only when brain index is empty.
+    # Separating base from query-driven avoids double-retrieval (old+brain = 3800+ chars).
     _needs_full_retrieval = (
         needs_retrieval
         or is_data_query
@@ -166,20 +169,6 @@ async def handle_chat_response(
         or needs_reasoning
         or not intents
     )
-    context_parts: list[str] = []
-    try:
-        base_ctx = await get_user_context(
-            user_id,
-            query=question if _needs_full_retrieval else None,
-        )
-        if base_ctx:
-            context_parts.append(base_ctx)
-    except Exception as e:
-        logging.warning("handle_chat_response: context error: %s", e)
-
-    # ── 2b. Brain context (memory_items — V2 brain index) ────────────────
-    # Injected when the query is about stored personal data / history.
-    # Bounded: max_items=10, max_chars=2200.  No OpenAI calls.
     _needs_brain_ctx = (
         is_data_query
         or needs_retrieval
@@ -187,15 +176,45 @@ async def handle_chat_response(
         or needs_reasoning
         or _is_memory_query(question)
     )
+    context_parts: list[str] = []
+    try:
+        base_ctx = await get_user_context(user_id, query=None)  # base only, no query search
+        if base_ctx:
+            context_parts.append(base_ctx)
+    except Exception as e:
+        logging.warning("handle_chat_response: context error: %s", e)
+
+    # ── 2b. Brain context (memory_items — V2 brain index) ────────────────
+    # Preferred over old retrieve_context to avoid double-retrieval.
+    # Falls back to retrieve_context when brain index is empty (user not yet indexed).
     if _needs_brain_ctx:
+        _brain_added = False
         try:
             brain_ctx = await retrieve_brain_context(
                 user_id, question, max_items=10, max_chars=2200,
             )
             if brain_ctx:
                 context_parts.append(brain_ctx)
+                _brain_added = True
         except Exception as _bce:
             logging.warning("handle_chat_response: brain context error: %s", _bce)
+        if not _brain_added and _needs_full_retrieval:
+            # Fallback: old keyword search (brain index empty — user not yet indexed)
+            try:
+                old_ctx = await retrieve_context(user_id, question, max_chars=1600)
+                if old_ctx:
+                    context_parts.append(old_ctx)
+            except Exception as _rce:
+                logging.warning("handle_chat_response: retrieve_context fallback error: %s", _rce)
+    elif _needs_full_retrieval:
+        # No memory/data query, but router flagged full retrieval (e.g. no intents detected).
+        # Use old retrieve_context as lightweight fallback.
+        try:
+            old_ctx = await retrieve_context(user_id, question, max_chars=1600)
+            if old_ctx:
+                context_parts.append(old_ctx)
+        except Exception as _rce:
+            logging.warning("handle_chat_response: retrieve_context fallback error: %s", _rce)
 
     if context_parts:
         system_parts.append("\n--- Данные пользователя ---\n" + "\n".join(context_parts))

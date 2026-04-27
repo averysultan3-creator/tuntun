@@ -125,7 +125,6 @@ async def handle_voice(message: Message, state: FSMContext, scheduler=None):
         user_id=message.from_user.id,
         attachment_id=None,
         transcript=text,
-        source_url=local_path,
     ))
 
     await _process_text(message, text, state, scheduler, message_type="voice",
