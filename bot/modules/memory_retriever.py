@@ -303,3 +303,157 @@ async def retrieve_context(user_id: int, query: str, max_chars: int = 2000) -> s
     if len(result) > max_chars:
         result = result[:max_chars] + "\n... [контекст обрезан]"
     return result
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Memory V2: retrieve_brain_context
+# Searches memory_items (the unified brain-index).
+# Old retrieve_context() is preserved and unchanged.
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def retrieve_brain_context(
+    user_id: int,
+    query: str,
+    max_items: int = 15,
+    max_chars: int = 2200,
+) -> str:
+    """Search `memory_items` for context relevant to `query`.
+
+    Algorithm:
+      1. Extract keywords + expand with synonyms (same helpers as retrieve_context).
+      2. Detect optional date range from query text.
+      3. LIKE search across content/summary/category/tags_json/source_title.
+      4. Score each hit: keyword match, synonym, category/source_type boost,
+         importance, recency, date range.
+      5. Deduplicate by id, sort by score, cap at max_items.
+      6. Update last_accessed_at for selected ids.
+      7. Return a compact text block.
+
+    No OpenAI/embedding calls are made.
+    """
+    keywords = extract_keywords(query)
+    if not keywords:
+        return ""
+    expanded = expand_with_synonyms(keywords)
+
+    # Optional date range from query
+    date_from: str = None
+    date_to: str = None
+    try:
+        from bot.utils.date_parser import parse_date_range as _parse_dr
+        date_from, date_to = _parse_dr(query)
+    except Exception:
+        pass
+
+    try:
+        rows = await db.memory_items_search(
+            user_id=user_id,
+            keywords=expanded[:15],
+            date_from=date_from,
+            date_to=date_to,
+            limit=max_items * 3,  # fetch more, score-sort below
+        )
+    except Exception as exc:
+        logging.warning("retrieve_brain_context: db error user=%s: %s", user_id, exc)
+        return ""
+
+    if not rows:
+        return ""
+
+    # Score each row
+    scored: list[tuple[int, dict]] = []
+    for row in rows:
+        text_blob = " ".join(filter(None, [
+            row.get("content", ""),
+            row.get("summary", ""),
+            row.get("category", ""),
+            row.get("tags_json", ""),
+            row.get("source_title", ""),
+        ]))
+        score = 0
+        blob_norm = _normalize_text(text_blob)
+        for kw in keywords:
+            if kw in blob_norm:
+                score += 3
+        for ex in expanded:
+            if ex not in keywords and ex in blob_norm:
+                score += 2
+
+        # category / source_type bonus
+        cat = (row.get("category") or "").lower()
+        st = (row.get("source_type") or "").lower()
+        for kw in keywords:
+            if kw == cat or kw == st:
+                score += 2
+
+        # importance bonus (1-5 scale, centre at 3)
+        imp = int(row.get("importance") or 3)
+        score += max(0, imp - 3)
+
+        # recency bonus (source_date or updated_at)
+        ts_str = row.get("source_date") or (row.get("updated_at") or "")[:10]
+        if ts_str:
+            try:
+                from datetime import date as _date_cls
+                delta = (_date_cls.today() - _date_cls.fromisoformat(ts_str[:10])).days
+                if delta == 0:
+                    score += 2
+                elif delta <= 7:
+                    score += 1
+            except Exception:
+                pass
+
+        # date range bonus: item falls within requested range
+        if date_from and date_to:
+            item_date = (row.get("source_date") or "")[:10]
+            if item_date and date_from <= item_date <= date_to:
+                score += 3
+
+        scored.append((score, row))
+
+    # Sort by score desc, deduplicate by id
+    scored.sort(key=lambda x: x[0], reverse=True)
+    seen_ids: set[int] = set()
+    top: list[tuple[int, dict]] = []
+    for s, row in scored:
+        rid = row["id"]
+        if rid not in seen_ids:
+            seen_ids.add(rid)
+            top.append((s, row))
+        if len(top) >= max_items:
+            break
+
+    if not top:
+        return ""
+
+    # Update last_accessed_at
+    try:
+        await db.memory_item_touch_accessed([row["id"] for _, row in top])
+    except Exception:
+        pass
+
+    # Build output block
+    lines: list[str] = ["[Brain context]"]
+    for score, row in top:
+        source_type = row.get("source_type") or "?"
+        source_id = row.get("source_id") or ""
+        source_date = (row.get("source_date") or "")[:10]
+        category = row.get("category") or ""
+        summary = (row.get("summary") or row.get("content") or "")[:200]
+
+        meta_parts = [source_type]
+        if source_id:
+            meta_parts.append(f"#{source_id}")
+        if source_date:
+            meta_parts.append(source_date)
+        if category and category not in ("general", source_type):
+            meta_parts.append(category)
+        meta_parts.append(f"score={score}")
+
+        lines.append(f"  [{', '.join(meta_parts)}] {summary}")
+
+    result = "\n".join(lines)
+    if len(result) > max_chars:
+        result = result[:max_chars] + "\n... [контекст обрезан]"
+    return result
+

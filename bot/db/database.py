@@ -248,6 +248,39 @@ _CREATE_SQL = [
         updated_at TEXT DEFAULT (datetime('now')),
         UNIQUE(user_id, object_type, object_id, google_type)
     )""",
+    # Memory V2 — unified brain-index across all sources
+    """CREATE TABLE IF NOT EXISTS memory_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        content TEXT NOT NULL,
+        summary TEXT,
+        category TEXT DEFAULT 'general',
+        tags_json TEXT,
+        importance INTEGER DEFAULT 3,
+        source_type TEXT NOT NULL,
+        source_id TEXT,
+        source_url TEXT,
+        source_title TEXT,
+        source_date TEXT,
+        embedding_model TEXT,
+        embedding_json TEXT,
+        hash TEXT NOT NULL,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now')),
+        last_accessed_at TEXT
+    )""",
+]
+
+# Indexes created once during migration (IF NOT EXISTS not supported in CREATE INDEX
+# for all SQLite versions, so we wrap in try/except in db_health_migrate)
+_MEMORY_ITEMS_INDEXES = [
+    "CREATE INDEX IF NOT EXISTS idx_memory_items_user_id ON memory_items(user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_memory_items_category ON memory_items(category)",
+    "CREATE INDEX IF NOT EXISTS idx_memory_items_source_type ON memory_items(source_type)",
+    "CREATE INDEX IF NOT EXISTS idx_memory_items_source ON memory_items(source_type, source_id)",
+    "CREATE INDEX IF NOT EXISTS idx_memory_items_hash ON memory_items(hash)",
+    "CREATE INDEX IF NOT EXISTS idx_memory_items_source_date ON memory_items(source_date)",
+    "CREATE INDEX IF NOT EXISTS idx_memory_items_created_at ON memory_items(created_at)",
 ]
 
 
@@ -288,6 +321,13 @@ class Database:
             "google_sync_queue": [
                 ("updated_at", "TEXT DEFAULT (datetime('now'))"),
             ],
+            "memory_items": [
+                ("embedding_model", "TEXT"),
+                ("embedding_json", "TEXT"),
+                ("last_accessed_at", "TEXT"),
+                ("source_url", "TEXT"),
+                ("source_title", "TEXT"),
+            ],
         }
 
         async with aiosqlite.connect(self._path) as conn:
@@ -319,6 +359,14 @@ class Database:
                             report.setdefault("errors", []).append(
                                 f"{table}.{col_name}: {exc}"
                             )
+
+            # 3. Create memory_items indexes (idempotent IF NOT EXISTS)
+            for idx_sql in _MEMORY_ITEMS_INDEXES:
+                try:
+                    await conn.execute(idx_sql)
+                    await conn.commit()
+                except Exception as exc:
+                    logging.debug("DB migrate: index already exists or error: %s", exc)
 
         if report["columns_added"]:
             logging.info("DB health_migrate done: added columns %s", report["columns_added"])
@@ -554,6 +602,156 @@ class Database:
             "SELECT * FROM memory WHERE user_id=? ORDER BY created_at DESC LIMIT 20",
             (user_id,),
         )
+
+    # ===== MEMORY V2 — brain-index =====
+
+    async def memory_item_upsert(
+        self,
+        user_id: int,
+        content: str,
+        hash: str,
+        source_type: str,
+        source_id: str = None,
+        summary: str = None,
+        category: str = "general",
+        tags_json: str = None,
+        importance: int = 3,
+        source_url: str = None,
+        source_title: str = None,
+        source_date: str = None,
+    ) -> int:
+        """Insert or update a memory_items row.
+
+        Deduplication strategy (priority order):
+          1. If (source_type, source_id) match an existing row → UPDATE.
+          2. Else if hash matches an existing row for this user → UPDATE.
+          3. Else INSERT.
+
+        Returns the row id.
+        """
+        existing = None
+        if source_id is not None:
+            existing = await self._fetchone(
+                "SELECT id FROM memory_items WHERE user_id=? AND source_type=? AND source_id=?",
+                (user_id, source_type, str(source_id)),
+            )
+        if existing is None:
+            existing = await self._fetchone(
+                "SELECT id FROM memory_items WHERE user_id=? AND hash=?",
+                (user_id, hash),
+            )
+        now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        if existing:
+            row_id = existing["id"]
+            await self._execute(
+                """UPDATE memory_items
+                   SET content=?, summary=?, category=?, tags_json=?, importance=?,
+                       source_id=?, source_url=?, source_title=?, source_date=?,
+                       hash=?, updated_at=?
+                   WHERE id=?""",
+                (content, summary, category, tags_json, importance,
+                 str(source_id) if source_id is not None else None,
+                 source_url, source_title, source_date,
+                 hash, now, row_id),
+            )
+            return row_id
+        return await self._execute(
+            """INSERT INTO memory_items
+               (user_id, content, summary, category, tags_json, importance,
+                source_type, source_id, source_url, source_title, source_date,
+                hash, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (user_id, content, summary, category, tags_json, importance,
+             source_type,
+             str(source_id) if source_id is not None else None,
+             source_url, source_title, source_date,
+             hash, now, now),
+        )
+
+    async def memory_items_search(
+        self,
+        user_id: int,
+        keywords: list,
+        date_from: str = None,
+        date_to: str = None,
+        category: str = None,
+        source_type: str = None,
+        limit: int = 20,
+    ) -> list:
+        """Search memory_items by keywords (LIKE over content, summary, category, tags_json, source_title).
+
+        Optionally filter by date range (source_date) and category / source_type.
+        Returns dicts sorted by importance DESC, updated_at DESC.
+        """
+        if not keywords:
+            return []
+        conditions = ["user_id=?"]
+        params: list = [user_id]
+
+        # keyword LIKE clauses
+        kw_parts = []
+        for kw in keywords[:15]:
+            like = f"%{kw}%"
+            kw_parts.append(
+                "(content LIKE ? OR summary LIKE ? OR category LIKE ? "
+                "OR tags_json LIKE ? OR source_title LIKE ?)"
+            )
+            params.extend([like, like, like, like, like])
+        conditions.append("(" + " OR ".join(kw_parts) + ")")
+
+        if date_from:
+            conditions.append("(source_date IS NULL OR source_date >= ?)")
+            params.append(date_from)
+        if date_to:
+            conditions.append("(source_date IS NULL OR source_date <= ?)")
+            params.append(date_to)
+        if category:
+            conditions.append("category=?")
+            params.append(category)
+        if source_type:
+            conditions.append("source_type=?")
+            params.append(source_type)
+
+        sql = (
+            "SELECT * FROM memory_items WHERE "
+            + " AND ".join(conditions)
+            + " ORDER BY importance DESC, updated_at DESC LIMIT ?"
+        )
+        params.append(limit)
+        return await self._fetchall(sql, tuple(params))
+
+    async def memory_items_by_source(
+        self, user_id: int, source_type: str, source_id: str = None
+    ) -> list:
+        """Fetch all memory_items for a given source_type (and optionally source_id)."""
+        if source_id is not None:
+            return await self._fetchall(
+                "SELECT * FROM memory_items WHERE user_id=? AND source_type=? AND source_id=? ORDER BY created_at DESC",
+                (user_id, source_type, str(source_id)),
+            )
+        return await self._fetchall(
+            "SELECT * FROM memory_items WHERE user_id=? AND source_type=? ORDER BY created_at DESC",
+            (user_id, source_type),
+        )
+
+    async def memory_item_touch_accessed(self, ids: list) -> None:
+        """Update last_accessed_at for a list of memory_item ids."""
+        if not ids:
+            return
+        now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        placeholders = ",".join("?" * len(ids))
+        await self._execute(
+            f"UPDATE memory_items SET last_accessed_at=? WHERE id IN ({placeholders})",
+            (now, *ids),
+        )
+
+    async def memory_items_count(self, user_id: int) -> int:
+        """Return total number of memory_items for a user."""
+        row = await self._fetchone(
+            "SELECT COUNT(*) as cnt FROM memory_items WHERE user_id=?",
+            (user_id,),
+        )
+        return row["cnt"] if row else 0
 
     # ===== PROJECTS & EXPENSES =====
 
