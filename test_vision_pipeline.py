@@ -1,37 +1,52 @@
-"""Tests for Vision pipeline, JSON parser, and pending actions flow.
+"""Tests for Vision pipeline, JSON parser, confirm/cancel matchers, and pending actions flow.
 
-Run: python -m pytest test_vision_pipeline.py -v
+Run: python -B -m pytest test_vision_pipeline.py -v
 """
 import asyncio
 import json
 import os
 import sys
+import types
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 os.environ.setdefault("DATABASE_PATH", ":memory:")
 
-# ── Stubs so we can import without real .env ──────────────────────────────────
-import types
+# ── config stub (scoped so other test modules aren't polluted) ─────────────────
+_ORIG_CONFIG = sys.modules.get("config")
 
-_fake_config = types.ModuleType("config")
-_fake_config.OPENAI_API_KEY = "sk-test"
-_fake_config.VISION_ENABLED = True
-_fake_config.GOOGLE_ENABLED = False
-_fake_config.ALLOWED_USER_IDS = []
-_fake_config.DB_PATH = ":memory:"
-_fake_config.MODEL_ROUTER = "gpt-4o-mini"
-_fake_config.MODEL_CHAT = "gpt-4o-mini"
-_fake_config.MODEL_REASONING = "gpt-4o"
-_fake_config.MODEL_VISION = "gpt-4o-mini"
-_fake_config.WHISPER_MODEL = "whisper-1"
-_fake_config.MODEL_EMBEDDINGS = "text-embedding-3-small"
-_fake_config.TIMEZONE = "Europe/Warsaw"
-_fake_config.MIN_CONFIDENCE = 0.65
-_fake_config.PHOTOS_DIR = "/tmp"
-sys.modules["config"] = _fake_config
+def _make_fake_config():
+    m = types.ModuleType("config")
+    m.OPENAI_API_KEY = "sk-test"
+    m.VISION_ENABLED = True
+    m.GOOGLE_ENABLED = False
+    m.ALLOWED_USER_IDS = []
+    m.DB_PATH = ":memory:"
+    m.MODEL_ROUTER = "gpt-4o-mini"
+    m.MODEL_CHAT = "gpt-4o-mini"
+    m.MODEL_REASONING = "gpt-4o"
+    m.MODEL_VISION = "gpt-4o-mini"
+    m.WHISPER_MODEL = "whisper-1"
+    m.MODEL_EMBEDDINGS = "text-embedding-3-small"
+    m.TIMEZONE = "Europe/Warsaw"
+    m.MIN_CONFIDENCE = 0.65
+    m.PHOTOS_DIR = "/tmp"
+    return m
 
-# ── Import the modules under test ─────────────────────────────────────────────
+
+@pytest.fixture(autouse=True)
+def _patch_config(monkeypatch):
+    """Inject fake config for every test; restore original afterwards."""
+    fake = _make_fake_config()
+    monkeypatch.setitem(sys.modules, "config", fake)
+    yield fake
+
+
+# ── Import the modules under test (after first fixture run sets the stub) ─────
+# We import lazily inside tests that need it, or use the fixture to ensure
+# the stub is installed before any import happens at module level.
+# Vision helpers are pure-python, safe to import once here:
+sys.modules["config"] = _make_fake_config()  # needed for module-level import below
 from bot.modules.vision import _parse_vision_json, _fallback_vision_result, _normalise
 
 
@@ -215,10 +230,11 @@ def test_photo_pipeline_saves_vision_result_mock():
 
 def test_pending_vision_action_confirm_yes():
     """'да' should dispatch actions and clear pending state."""
-    from bot.handlers.message import _CONFIRM_WORDS, _CANCEL_WORDS
+    from bot.handlers.message import is_vision_action_confirm, is_vision_action_cancel
 
-    assert "да" in _CONFIRM_WORDS
-    assert "сохрани" in _CONFIRM_WORDS
+    assert is_vision_action_confirm("да") is True
+    assert is_vision_action_confirm("сохрани") is True
+    assert is_vision_action_cancel("да") is False  # confirm word is not a cancel
 
     mock_db = _AsyncDB()
     actions = [{"intent": "expense_add", "params": {"amount": 42, "currency": "PLN"}, "confidence": 0.95}]
@@ -249,10 +265,11 @@ def test_pending_vision_action_confirm_yes():
 
 def test_pending_vision_action_cancel():
     """'нет' should clear pending state without dispatching."""
-    from bot.handlers.message import _CANCEL_WORDS
+    from bot.handlers.message import is_vision_action_cancel, _CANCEL_EXACT
 
-    assert "нет" in _CANCEL_WORDS
-    assert "отмена" in _CANCEL_WORDS
+    assert is_vision_action_cancel("нет") is True
+    assert is_vision_action_cancel("отмена") is True
+    assert "нет" in _CANCEL_EXACT
 
     mock_db = _AsyncDB()
     actions = [{"intent": "expense_add", "params": {}}]
@@ -306,6 +323,112 @@ def test_db_health_creates_google_tables():
 
     tables = asyncio.run(run())
     assert len(tables) >= 10  # all main tables present
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 10-19. Safe confirm/cancel matcher tests  (spec §6, items 1-8)
+# ═════════════════════════════════════════════════════════════════════════════
+
+def test_vision_confirm_exact_yes():
+    """'да' is an unambiguous confirmation."""
+    from bot.handlers.message import is_vision_action_confirm
+    assert is_vision_action_confirm("да") is True
+
+
+def test_vision_confirm_exact_yes_with_punctuation():
+    """'да.' and 'да!' are also confirmations."""
+    from bot.handlers.message import is_vision_action_confirm
+    assert is_vision_action_confirm("да.") is True
+    assert is_vision_action_confirm("да!") is True
+
+
+def test_vision_confirm_yes_save():
+    """'да, сохрани' is a confirmation."""
+    from bot.handlers.message import is_vision_action_confirm
+    assert is_vision_action_confirm("да, сохрани") is True
+
+
+def test_vision_confirm_save_finance():
+    """Explicit action phrase 'запиши в финансы' is a confirmation."""
+    from bot.handlers.message import is_vision_action_confirm
+    assert is_vision_action_confirm("запиши в финансы") is True
+    assert is_vision_action_confirm("добавь в финансы") is True
+
+
+def test_vision_confirm_not_dai():
+    """'дай план на сегодня' must NOT trigger confirmation."""
+    from bot.handlers.message import is_vision_action_confirm
+    assert is_vision_action_confirm("дай план на сегодня") is False
+
+
+def test_vision_confirm_not_dannye():
+    """'данные по рекламе' must NOT trigger confirmation."""
+    from bot.handlers.message import is_vision_action_confirm
+    assert is_vision_action_confirm("данные по рекламе") is False
+
+
+def test_vision_confirm_not_davai():
+    """'давай посмотрим' must NOT trigger confirmation."""
+    from bot.handlers.message import is_vision_action_confirm
+    assert is_vision_action_confirm("давай посмотрим") is False
+
+
+def test_vision_confirm_not_neutral_phrases():
+    """Other neutral phrases must not be mistaken for confirmation."""
+    from bot.handlers.message import is_vision_action_confirm
+    for phrase in ["дальше", "доброе утро", "дай мне план", "добавь задачу купить хлеб"]:
+        assert is_vision_action_confirm(phrase) is False, f"Should NOT confirm: {phrase!r}"
+
+
+def test_vision_cancel_phrases():
+    """Cancel matcher covers the required phrases."""
+    from bot.handlers.message import is_vision_action_cancel
+    for phrase in ["нет", "не надо", "отмена", "отмени", "не сохраняй", "не записывай"]:
+        assert is_vision_action_cancel(phrase) is True, f"Should cancel: {phrase!r}"
+
+
+def test_vision_cancel_not_triggered_by_neutral():
+    """Neutral phrases are not cancels."""
+    from bot.handlers.message import is_vision_action_cancel
+    for phrase in ["не уверен", "нет времени", "не могу сейчас"]:
+        assert is_vision_action_cancel(phrase) is False, f"Should NOT cancel: {phrase!r}"
+
+
+def test_pending_vision_dai_plan_goes_to_normal_flow():
+    """With pending actions, 'дай план на сегодня' should return False from the matcher."""
+    from bot.handlers.message import is_vision_action_confirm, is_vision_action_cancel
+    # If both matchers return False, _check_pending_vision_actions returns False
+    # meaning the message falls through to normal classify/dispatcher.
+    text = "дай план на сегодня"
+    assert is_vision_action_confirm(text) is False
+    assert is_vision_action_cancel(text) is False
+
+
+def test_pending_vision_yes_executes_actions():
+    """'да' triggers confirm path: actions should be dispatched and state cleared."""
+    from bot.handlers.message import is_vision_action_confirm, is_vision_action_cancel
+    mock_db = _AsyncDB()
+    actions = [{"intent": "expense_add", "params": {"amount": 42}}]
+
+    assert is_vision_action_confirm("да") is True
+    assert is_vision_action_cancel("да") is False
+
+    async def run():
+        await mock_db.conversation_state_update(
+            2, active_topic="photo",
+            pending_vision_actions_json=json.dumps(actions),
+        )
+        # Simulate what _check_pending_vision_actions does on confirm
+        state = await mock_db.conversation_state_get(2)
+        pending = json.loads(state["pending_vision_actions_json"])
+        await mock_db.conversation_state_update(2, pending_vision_actions_json=None, active_topic=None)
+        return pending
+
+    executed = asyncio.run(run())
+    assert executed[0]["intent"] == "expense_add"
+    final = asyncio.run(mock_db.conversation_state_get(2))
+    assert final.get("pending_vision_actions_json") is None
+    assert final.get("active_topic") is None
 
 
 if __name__ == "__main__":

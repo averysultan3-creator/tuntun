@@ -154,32 +154,68 @@ async def handle_text(message: Message, state: FSMContext, scheduler=None):
     await _process_text(message, message.text, state, scheduler, message_type="text")
 
 
-_CONFIRM_WORDS = frozenset({
-    "да", "ок", "окей", "ладно", "давай", "сохрани", "запиши", "добавь",
-    "запиши в финансы", "сделай задачей", "добавь в учёбу", "выполни",
-    "подтверди", "yes", "ok", "sure",
+# ── Exact-match sets for confirm / cancel (no startswith!) ──────────────────
+_CONFIRM_EXACT = frozenset({
+    "ок", "окей", "ага", "подтверди", "подтверждаю",
+    "сохрани", "запиши", "добавь",
+    "запиши в финансы", "добавь в финансы",
+    "сделай задачей", "добавь в учёбу",
+    "выполни", "yes", "ok", "sure",
 })
-_CANCEL_WORDS = frozenset({
-    "нет", "не надо", "отмена", "отменить", "cancel", "стоп", "stop",
-    "не сохраняй", "не добавляй",
+_CANCEL_EXACT = frozenset({
+    "нет", "не надо", "отмена", "отменить", "отмени",
+    "cancel", "стоп", "stop",
+    "не сохраняй", "не добавляй", "не записывай",
 })
+# Words that start with "да" but are NOT confirmations
+_DA_BLOCKLIST = frozenset({"дай", "данные", "давай", "дальше", "даже", "дата", "дать", "дано"})
+# ^да followed by punctuation/space/end-of-string
+import re as _re
+_DA_RE = _re.compile(r'^да([,.!?\s]|$)')
+# Max age (seconds) of pending_vision_actions to accept
+_PENDING_TTL_SECONDS = 1800  # 30 minutes
+
+
+def is_vision_action_confirm(text: str) -> bool:
+    """Return True only for unambiguous confirmation phrases."""
+    t = text.strip().lower()
+    if not t:
+        return False
+    if t in _CONFIRM_EXACT:
+        return True
+    # Block words that start with "да" but mean something else
+    first_word = t.split()[0] if t else ""
+    if first_word in _DA_BLOCKLIST:
+        return False
+    # "да" / "да, сохрани" / "да!"
+    if _DA_RE.match(t):
+        return True
+    return False
+
+
+def is_vision_action_cancel(text: str) -> bool:
+    """Return True only for explicit cancellation phrases."""
+    return text.strip().lower() in _CANCEL_EXACT
 
 
 async def _check_pending_vision_actions(message: Message, scheduler) -> bool:
-    """Check if user is responding to a pending vision suggestion.
+    """Intercept confirm/cancel responses to pending vision actions.
 
-    Returns True if the message was handled (caller should return).
+    Returns True only when message IS an explicit confirm or cancel.
+    Neutral messages are NOT intercepted — they fall through to normal flow.
     """
     import json as _json
-    user_id = message.from_user.id
+    from datetime import datetime as _dt
+
     text = (message.text or "").strip().lower()
+    is_confirm = is_vision_action_confirm(text)
+    is_cancel = is_vision_action_cancel(text)
 
-    # Fast exit: only intercept short confirmation/cancellation phrases
-    is_confirm = text in _CONFIRM_WORDS or any(text.startswith(w) for w in _CONFIRM_WORDS)
-    is_cancel = text in _CANCEL_WORDS
-
+    # Fast exit: neutral message — don't touch pending state, let normal flow handle
     if not (is_confirm or is_cancel):
         return False
+
+    user_id = message.from_user.id
 
     try:
         state = await db.conversation_state_get(user_id)
@@ -189,6 +225,22 @@ async def _check_pending_vision_actions(message: Message, scheduler) -> bool:
         pending_json = state.get("pending_vision_actions_json")
         if not pending_json:
             return False
+
+        # TTL: ignore stale pending actions
+        updated_at_raw = state.get("updated_at")
+        if updated_at_raw:
+            try:
+                updated_at = _dt.fromisoformat(str(updated_at_raw))
+                age = (_dt.now() - updated_at).total_seconds()
+                if age > _PENDING_TTL_SECONDS:
+                    await db.conversation_state_update(
+                        user_id,
+                        pending_vision_actions_json=None,
+                        active_topic=None,
+                    )
+                    return False
+            except Exception:
+                pass  # can't parse date — proceed
 
         actions = _json.loads(pending_json)
         if not actions:

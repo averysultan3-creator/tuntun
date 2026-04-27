@@ -305,8 +305,18 @@ class Database:
                         msg = f"{table}.{col_name} ({col_def})"
                         report["columns_added"].append(msg)
                         logging.info("DB migrate: added column %s", msg)
-                    except Exception:
-                        pass  # column already exists — expected
+                    except Exception as exc:
+                        err_lower = str(exc).lower()
+                        if "duplicate column" in err_lower or "already exists" in err_lower:
+                            pass  # expected on repeated startups
+                        else:
+                            logging.warning(
+                                "DB migrate: unexpected error adding %s.%s: %s",
+                                table, col_name, exc,
+                            )
+                            report.setdefault("errors", []).append(
+                                f"{table}.{col_name}: {exc}"
+                            )
 
         if report["columns_added"]:
             logging.info("DB health_migrate done: added columns %s", report["columns_added"])

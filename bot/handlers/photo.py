@@ -89,6 +89,23 @@ async def handle_photo(message: Message, scheduler=None):
                     # Brief summary on attachment for quick retrieval
                     await db.attachment_update_vision(att_id, vision_result.get("summary", ""))
 
+                    # Re-sync attachment to Google now that we have vision_summary
+                    if config.GOOGLE_ENABLED:
+                        import asyncio as _asyncio
+                        from bot.integrations.google.sync import sync_object_to_google as _sync
+                        _asyncio.create_task(_sync(
+                            user_id=user_id,
+                            object_type="attachment",
+                            object_id=att_id,
+                            payload={
+                                "file_type": "photo",
+                                "local_path": str(local_path),
+                                "caption": caption,
+                                "section_name": section_name or "",
+                                "vision_summary": vision_result.get("summary", ""),
+                            },
+                        ))
+
                     # Save pending actions to conversation_state for follow-up
                     actions = vision_result.get("suggested_actions") or []
                     await db.conversation_state_update(
