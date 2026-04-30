@@ -9,6 +9,10 @@ Supported object types / targets:
     reminder    → Reminders sheet
     memory      → Memory sheet
     idea        → Ideas sheet
+    entity      → Entities sheet
+    relation    → Relations sheet
+    event       → Events sheet
+    metric      → Metrics sheet
     long_note   → LongNotes sheet + Google Doc
     attachment  → Attachments sheet + Google Drive
     backup      → Google Drive
@@ -121,6 +125,91 @@ async def sync_idea(user_id: int, idea_id: int, payload: dict) -> bool:
     return result is not None
 
 
+async def sync_entity(user_id: int, entity_id: int, payload: dict) -> bool:
+    sid = await _get_spreadsheet(user_id)
+    if not sid:
+        return False
+    from bot.integrations.google.sheets import append_row
+    row = [
+        date.today().strftime("%Y-%m-%d"),
+        str(entity_id),
+        payload.get("type", ""),
+        payload.get("name", ""),
+        payload.get("title", ""),
+        payload.get("canonical_key", ""),
+        payload.get("status", "active"),
+        payload.get("data_json", ""),
+    ]
+    result = await append_row(sid, "Entities", row, user_id=user_id,
+                               object_type="entity", object_id=entity_id)
+    return result is not None
+
+
+async def sync_relation(user_id: int, relation_id: int, payload: dict) -> bool:
+    sid = await _get_spreadsheet(user_id)
+    if not sid:
+        return False
+    from bot.integrations.google.sheets import append_row
+    row = [
+        date.today().strftime("%Y-%m-%d"),
+        str(relation_id),
+        payload.get("from_type", ""),
+        payload.get("from_id", ""),
+        payload.get("relation_type", ""),
+        payload.get("to_type", ""),
+        payload.get("to_id", ""),
+        payload.get("confidence", 1.0),
+        payload.get("source_message_id", ""),
+        payload.get("data_json", ""),
+    ]
+    result = await append_row(sid, "Relations", row, user_id=user_id,
+                               object_type="relation", object_id=relation_id)
+    return result is not None
+
+
+async def sync_event(user_id: int, event_id: int, payload: dict) -> bool:
+    sid = await _get_spreadsheet(user_id)
+    if not sid:
+        return False
+    from bot.integrations.google.sheets import append_row
+    row = [
+        date.today().strftime("%Y-%m-%d"),
+        str(event_id),
+        payload.get("entity_type", ""),
+        payload.get("entity_id", ""),
+        payload.get("event_type", ""),
+        payload.get("date", ""),
+        payload.get("title", ""),
+        payload.get("source_message_id", ""),
+        payload.get("data_json", ""),
+    ]
+    result = await append_row(sid, "Events", row, user_id=user_id,
+                               object_type="event", object_id=event_id)
+    return result is not None
+
+
+async def sync_metric(user_id: int, metric_id: int, payload: dict) -> bool:
+    sid = await _get_spreadsheet(user_id)
+    if not sid:
+        return False
+    from bot.integrations.google.sheets import append_row
+    row = [
+        date.today().strftime("%Y-%m-%d"),
+        str(metric_id),
+        payload.get("entity_type", ""),
+        payload.get("entity_id", ""),
+        payload.get("metric_name", ""),
+        payload.get("metric_value", ""),
+        payload.get("unit", ""),
+        payload.get("date", ""),
+        payload.get("source", ""),
+        payload.get("data_json", ""),
+    ]
+    result = await append_row(sid, "Metrics", row, user_id=user_id,
+                               object_type="metric", object_id=metric_id)
+    return result is not None
+
+
 async def sync_long_note(user_id: int, note_id: int, payload: dict) -> Optional[str]:
     """Create a Google Doc and index it in LongNotes sheet. Returns doc URL."""
     from bot.integrations.google.docs import create_doc, make_summary
@@ -204,14 +293,107 @@ async def sync_attachment(user_id: int, attachment_id: int, payload: dict) -> Op
     return drive_url
 
 
+async def sync_dynamic_record(user_id: int, record_id: int, payload: dict) -> bool:
+    """Sync a dynamic section record to DynamicRecords sheet."""
+    sid = await _get_spreadsheet(user_id)
+    if not sid:
+        return False
+    import json as _json
+    section_name = payload.get("section_name", "")
+    data = payload.get("data") or {}
+    data_json = _json.dumps(data, ensure_ascii=False) if isinstance(data, dict) else str(data)
+    summary = payload.get("summary", str(data)[:120])
+    row = [
+        date.today().strftime("%Y-%m-%d"),
+        str(record_id),
+        section_name,
+        data_json,
+        summary,
+        date.today().strftime("%Y-%m-%d %H:%M:%S"),
+    ]
+    result = await append_row(sid, "DynamicRecords", row, user_id=user_id,
+                               object_type="dynamic_record", object_id=record_id)
+    return result is not None
+
+
+async def sync_campaign(user_id: int, campaign_id: int, payload: dict) -> bool:
+    """Sync a campaign to Campaigns sheet (separate handler)."""
+    sid = await _get_spreadsheet(user_id)
+    if not sid:
+        return False
+    row = [
+        date.today().strftime("%Y-%m-%d"),
+        str(campaign_id),
+        payload.get("name", ""),
+        payload.get("platform", ""),
+        str(payload.get("budget_usd") or payload.get("budget") or ""),
+        payload.get("status", "active"),
+        payload.get("date_start", ""),
+        payload.get("date_end", ""),
+        payload.get("notes", ""),
+    ]
+    result = await append_row(sid, "Campaigns", row, user_id=user_id,
+                               object_type="campaign", object_id=campaign_id)
+    return result is not None
+
+
+async def sync_order(user_id: int, order_id: int, payload: dict) -> bool:
+    """Sync an order to Orders sheet."""
+    sid = await _get_spreadsheet(user_id)
+    if not sid:
+        return False
+    row = [
+        payload.get("date") or date.today().strftime("%Y-%m-%d"),
+        str(order_id),
+        payload.get("source_campaign", ""),
+        str(payload.get("amount_usd") or ""),
+        str(payload.get("quantity") or ""),
+        payload.get("status", "new"),
+        payload.get("notes", ""),
+    ]
+    result = await append_row(sid, "Orders", row, user_id=user_id,
+                               object_type="order", object_id=order_id)
+    return result is not None
+
+
+async def sync_memory_index(user_id: int, item_id: int, payload: dict) -> bool:
+    """Sync a memory_items row reference to MemoryIndex sheet."""
+    sid = await _get_spreadsheet(user_id)
+    if not sid:
+        return False
+    row = [
+        date.today().strftime("%Y-%m-%d"),
+        str(item_id),
+        payload.get("source_type", ""),
+        str(payload.get("source_id", "")),
+        payload.get("category", ""),
+        payload.get("summary", ""),
+        payload.get("tags", ""),
+        payload.get("google_link", ""),
+    ]
+    result = await append_row(sid, "MemoryIndex", row, user_id=user_id,
+                               object_type="memory_index", object_id=item_id)
+    return result is not None
+
+
 # ── Dispatcher ────────────────────────────────────────────────────────────────
 
 _SYNC_HANDLERS = {
-    "expense":    sync_expense,
-    "task":       sync_task,
-    "reminder":   sync_reminder,
-    "memory":     sync_memory,
-    "idea":       sync_idea,
+    "expense":        sync_expense,
+    "finance":        sync_expense,
+    "task":           sync_task,
+    "reminder":       sync_reminder,
+    "memory":         sync_memory,
+    "idea":           sync_idea,
+    "entity":         sync_entity,
+    "relation":       sync_relation,
+    "event":          sync_event,
+    "metric":         sync_metric,
+    "dynamic_record": sync_dynamic_record,
+    "dynamic":        sync_dynamic_record,
+    "campaign":       sync_campaign,
+    "order":          sync_order,
+    "memory_index":   sync_memory_index,
 }
 
 

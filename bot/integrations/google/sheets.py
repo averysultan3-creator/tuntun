@@ -16,6 +16,10 @@ Sheet headers per data type:
     Ideas:     date, id, title, category, status, project
     LongNotes: date, title, category, summary, doc_link, tags
     Attachments: date, type, section, caption, local_path, drive_link, summary
+    Entities:  id, type, name, title, canonical_key, status, data_json
+    Relations: from_type/from_id/relation_type/to_type/to_id
+    Events:    entity_type/entity_id/event_type/date/title
+    Metrics:   entity_type/entity_id/metric_name/metric_value/unit/date
 """
 import logging
 from typing import Optional
@@ -32,6 +36,17 @@ _SHEET_HEADERS: dict[str, list[str]] = {
     "Study":       ["date", "id", "subject", "type", "content", "due_date", "status"],
     "DailyPlans":  ["date", "summary", "tasks_count", "doc_link"],
     "Logs":        ["date", "user_id", "message_type", "text_preview", "actions"],
+    "Orders":      ["date", "id", "project_id", "campaign_id", "amount", "currency", "status", "customer", "notes"],
+    "Ads":         ["date", "id", "platform", "account", "project_id", "status", "notes"],
+    "Campaigns":   ["date", "id", "project_id", "name", "platform", "launch_date", "status", "budget_amount", "budget_currency", "notes"],
+    "Creatives":   ["date", "id", "campaign_id", "name", "format", "status", "asset_link", "notes"],
+    "Entities":    ["date", "id", "type", "name", "title", "canonical_key", "status", "data_json"],
+    "Relations":   ["date", "id", "from_type", "from_id", "relation_type", "to_type", "to_id", "confidence", "source_message_id", "data_json"],
+    "Events":      ["date", "id", "entity_type", "entity_id", "event_type", "event_date", "title", "source_message_id", "data_json"],
+    "Metrics":     ["date", "id", "entity_type", "entity_id", "metric_name", "metric_value", "unit", "metric_date", "source", "data_json"],
+    "MemoryIndex": ["date", "id", "source_type", "source_id", "category", "summary", "tags", "google_link"],
+    "DynamicRecords": ["date", "local_id", "section_name", "data_json",
+                       "summary", "created_at"],
 }
 
 
