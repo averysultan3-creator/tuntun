@@ -13,7 +13,7 @@
 ```env
 TELEGRAM_BOT_TOKEN=твой_токен_от_BotFather
 OPENAI_API_KEY=твой_openai_ключ
-OPENAI_MODEL=gpt-4o-mini
+OPENAI_MODEL=gpt-4o
 TIMEZONE=Europe/Warsaw
 DATABASE_PATH=tuntun.db
 ```
@@ -133,7 +133,10 @@ TUNTUN/
 |-----------|----------|
 | `TELEGRAM_BOT_TOKEN` | Токен от @BotFather |
 | `OPENAI_API_KEY` | OpenAI API ключ |
-| `OPENAI_MODEL` | Модель (gpt-4o-mini / gpt-4o) |
+| `OPENAI_MODEL` | Основная модель для умного чата (например, gpt-4o) |
+| `OPENAI_MODEL_ROUTER` | Быстрая модель для классификации действий (например, gpt-4o-mini) |
+| `OPENAI_MODEL_CHAT` | Модель для разговорных ответов, если хочешь переопределить `OPENAI_MODEL` |
+| `OPENAI_MODEL_REASONING` | Модель для сложных задач, планов и неоднозначного контекста |
 | `OPENAI_TRANSCRIBE_MODEL` | Whisper модель |
 | `DATABASE_PATH` | Путь к SQLite файлу |
 | `TIMEZONE` | Часовой пояс |

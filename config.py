@@ -12,7 +12,7 @@ ALLOWED_USER_IDS: list = [
 ]
 TIMEZONE: str = os.getenv("TIMEZONE", "Europe/Warsaw")
 DB_PATH: str = os.getenv("DATABASE_PATH") or os.getenv("DB_PATH", "tuntun.db")
-OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o")
 
 # Transcription: OPENAI_MODEL_TRANSCRIBE preferred, OPENAI_TRANSCRIBE_MODEL legacy fallback
 WHISPER_MODEL: str = (
@@ -29,14 +29,14 @@ WHISPER_MODEL: str = (
 #   CHAT      → OPENAI_MODEL → ROUTER
 
 # ROUTER — cheap, fast: intent classification only (always has a value)
-MODEL_ROUTER: str      = os.getenv("OPENAI_MODEL_ROUTER") or OPENAI_MODEL or "gpt-4o-mini"
+MODEL_ROUTER: str      = os.getenv("OPENAI_MODEL_ROUTER") or "gpt-4o-mini"
 
 # CHAT — smart: conversations, advice, explanations
 # Fallback: OPENAI_MODEL_CHAT -> OPENAI_MODEL -> MODEL_ROUTER
 MODEL_CHAT: str        = (
     os.getenv("OPENAI_MODEL_CHAT")
     or OPENAI_MODEL
-    or MODEL_ROUTER
+    or "gpt-4o"
 )
 
 # REASONING — strongest: planning, analytics, ambiguous/destructive

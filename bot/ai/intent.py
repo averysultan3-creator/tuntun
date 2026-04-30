@@ -51,6 +51,42 @@ async def _get_lightweight_router_context(user_id: int) -> str:
     except Exception:
         return ""
 
+
+async def _get_recent_router_messages(
+    user_id: int,
+    current_message: str,
+    limit: int = 6,
+) -> list[dict]:
+    """Return recent dialogue for the router without heavy user-data retrieval."""
+    try:
+        from bot.db.database import db
+
+        rows = await db.message_logs_recent(user_id, limit=limit + 1)
+        messages = []
+        skipped_current = False
+        for row in reversed(rows):
+            user_text = str(row.get("original_text") or "").strip()
+            bot_text = str(row.get("bot_response") or "").strip()
+
+            # _process_text logs the current user message before classify().
+            # Skip that open row so the final current message is not duplicated.
+            if (
+                not skipped_current
+                and not bot_text
+                and user_text == current_message.strip()
+            ):
+                skipped_current = True
+                continue
+
+            if user_text:
+                messages.append({"role": "user", "content": user_text[:600]})
+            if bot_text:
+                messages.append({"role": "assistant", "content": bot_text[:600]})
+
+        return messages[-limit * 2:]
+    except Exception:
+        return []
+
 _FALLBACK = {
     "actions": [],
     "chat_response_needed": True,
@@ -237,12 +273,17 @@ async def classify(user_message: str, user_id: int = None) -> dict:
     )
 
     try:
+        router_messages = []
+        if user_id:
+            router_messages = await _get_recent_router_messages(user_id, user_message)
+
+        messages = [{"role": "system", "content": system}]
+        messages.extend(router_messages)
+        messages.append({"role": "user", "content": user_message})
+
         response = await _client.chat.completions.create(
             model=get_model("router"),  # always cheap router for classification
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user_message},
-            ],
+            messages=messages,
             response_format={"type": "json_object"},
             temperature=0.1,
             max_completion_tokens=1500,

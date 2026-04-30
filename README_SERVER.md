@@ -129,8 +129,8 @@ TELEGRAM_BOT_TOKEN=   # Токен от @BotFather
 OPENAI_API_KEY=       # Ключ с platform.openai.com
 
 # === Модели ===
-OPENAI_MODEL=gpt-4o-mini              # Модель по умолчанию
-OPENAI_MODEL_ROUTER=gpt-4.1-mini      # Для классификации интентов (быстрая)
+OPENAI_MODEL=gpt-4o                   # Основная умная модель
+OPENAI_MODEL_ROUTER=gpt-4o-mini       # Для классификации интентов (быстрая)
 OPENAI_MODEL_CHAT=                    # Для чата (пусто = OPENAI_MODEL)
 OPENAI_MODEL_REASONING=               # Для сложных задач
 OPENAI_MODEL_VISION=                  # Для анализа фото (пусто = отключено)

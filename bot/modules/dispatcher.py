@@ -304,6 +304,10 @@ async def dispatch_actions(actions: list, user_id: int, ai_reply: str,
         if _backend_only and not _has_chat_question:
             # Pure backend action, user asked no question → skip model call
             _need_chat = False
+        elif not results and not _all_intents:
+            # Pure conversation must use the real chat/reasoning model, not the
+            # JSON router reply. This is the "personal ChatGPT" path.
+            _need_chat = True
         elif _backend_only and _has_chat_question:
             # Mixed: action done + user asked a question → answer with CHAT (not reasoning)
             _need_chat = True

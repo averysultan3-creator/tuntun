@@ -167,6 +167,62 @@ _CREATE_SQL = [
         date_to TEXT,
         created_at TEXT DEFAULT (datetime('now'))
     )""",
+    # Business Graph — normalized objects and links for personal AI OS
+    """CREATE TABLE IF NOT EXISTS entities (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        type TEXT NOT NULL,
+        name TEXT NOT NULL,
+        title TEXT,
+        canonical_key TEXT NOT NULL,
+        status TEXT DEFAULT 'active',
+        data_json TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now')),
+        UNIQUE(user_id, type, canonical_key)
+    )""",
+    """CREATE TABLE IF NOT EXISTS relations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        from_type TEXT NOT NULL,
+        from_id INTEGER NOT NULL,
+        relation_type TEXT NOT NULL,
+        to_type TEXT NOT NULL,
+        to_id INTEGER NOT NULL,
+        confidence REAL DEFAULT 1.0,
+        source_message_id INTEGER,
+        data_json TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now')),
+        UNIQUE(user_id, from_type, from_id, relation_type, to_type, to_id)
+    )""",
+    """CREATE TABLE IF NOT EXISTS events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        entity_type TEXT,
+        entity_id INTEGER,
+        event_type TEXT NOT NULL,
+        date TEXT,
+        title TEXT,
+        data_json TEXT,
+        source_message_id INTEGER,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now'))
+    )""",
+    """CREATE TABLE IF NOT EXISTS metrics (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        entity_type TEXT NOT NULL,
+        entity_id INTEGER NOT NULL,
+        metric_name TEXT NOT NULL,
+        metric_value REAL,
+        unit TEXT,
+        date TEXT,
+        source TEXT,
+        data_json TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now'))
+    )""",
     # Conversation state — active context for contextual follow-ups
     """CREATE TABLE IF NOT EXISTS conversation_state (
         user_id INTEGER PRIMARY KEY,
@@ -281,6 +337,14 @@ _MEMORY_ITEMS_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_memory_items_hash ON memory_items(hash)",
     "CREATE INDEX IF NOT EXISTS idx_memory_items_source_date ON memory_items(source_date)",
     "CREATE INDEX IF NOT EXISTS idx_memory_items_created_at ON memory_items(created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_entities_user_type ON entities(user_id, type)",
+    "CREATE INDEX IF NOT EXISTS idx_entities_canonical ON entities(user_id, type, canonical_key)",
+    "CREATE INDEX IF NOT EXISTS idx_relations_from ON relations(user_id, from_type, from_id)",
+    "CREATE INDEX IF NOT EXISTS idx_relations_to ON relations(user_id, to_type, to_id)",
+    "CREATE INDEX IF NOT EXISTS idx_events_entity ON events(user_id, entity_type, entity_id)",
+    "CREATE INDEX IF NOT EXISTS idx_events_date ON events(user_id, date)",
+    "CREATE INDEX IF NOT EXISTS idx_metrics_entity ON metrics(user_id, entity_type, entity_id)",
+    "CREATE INDEX IF NOT EXISTS idx_metrics_date ON metrics(user_id, date)",
 ]
 
 
@@ -856,6 +920,217 @@ class Database:
         )
         for row in rows:
             row["data"] = json.loads(row["data"])
+        return rows
+
+    # ===== BUSINESS GRAPH =====
+
+    async def entity_upsert(
+        self,
+        user_id: int,
+        type: str,
+        name: str,
+        title: str = None,
+        canonical_key: str = None,
+        status: str = "active",
+        data: dict = None,
+    ) -> int:
+        """Create or update a normalized business entity.
+
+        Examples: project, campaign, creative, order, document, health_metric.
+        Deduplication is per user + type + canonical_key.
+        """
+        key = (canonical_key or name or "").strip().lower()
+        if not key:
+            raise ValueError("entity canonical_key/name is required")
+        data_json = json.dumps(data or {}, ensure_ascii=False)
+        existing = await self._fetchone(
+            "SELECT id FROM entities WHERE user_id=? AND type=? AND canonical_key=?",
+            (user_id, type, key),
+        )
+        if existing:
+            await self._execute(
+                """UPDATE entities
+                   SET name=?, title=?, status=?, data_json=?, updated_at=datetime('now')
+                   WHERE id=? AND user_id=?""",
+                (name, title or name, status, data_json, existing["id"], user_id),
+            )
+            return existing["id"]
+        return await self._execute(
+            """INSERT INTO entities
+               (user_id, type, name, title, canonical_key, status, data_json)
+               VALUES (?,?,?,?,?,?,?)""",
+            (user_id, type, name, title or name, key, status, data_json),
+        )
+
+    async def entity_get(self, user_id: int, entity_id: int) -> Optional[dict]:
+        row = await self._fetchone(
+            "SELECT * FROM entities WHERE user_id=? AND id=?",
+            (user_id, entity_id),
+        )
+        if row:
+            row["data"] = json.loads(row.get("data_json") or "{}")
+        return row
+
+    async def entity_find(
+        self,
+        user_id: int,
+        type: str = None,
+        query: str = None,
+        limit: int = 20,
+    ) -> list:
+        sql = "SELECT * FROM entities WHERE user_id=?"
+        params: list = [user_id]
+        if type:
+            sql += " AND type=?"
+            params.append(type)
+        if query:
+            sql += " AND (name LIKE ? OR title LIKE ? OR canonical_key LIKE ?)"
+            like = f"%{query}%"
+            params.extend([like, like, like])
+        sql += " ORDER BY updated_at DESC LIMIT ?"
+        params.append(limit)
+        rows = await self._fetchall(sql, tuple(params))
+        for row in rows:
+            row["data"] = json.loads(row.get("data_json") or "{}")
+        return rows
+
+    async def relation_upsert(
+        self,
+        user_id: int,
+        from_type: str,
+        from_id: int,
+        relation_type: str,
+        to_type: str,
+        to_id: int,
+        confidence: float = 1.0,
+        source_message_id: int = None,
+        data: dict = None,
+    ) -> int:
+        data_json = json.dumps(data or {}, ensure_ascii=False)
+        existing = await self._fetchone(
+            """SELECT id FROM relations
+               WHERE user_id=? AND from_type=? AND from_id=? AND relation_type=?
+                 AND to_type=? AND to_id=?""",
+            (user_id, from_type, from_id, relation_type, to_type, to_id),
+        )
+        if existing:
+            await self._execute(
+                """UPDATE relations
+                   SET confidence=?, source_message_id=?, data_json=?, updated_at=datetime('now')
+                   WHERE id=? AND user_id=?""",
+                (confidence, source_message_id, data_json, existing["id"], user_id),
+            )
+            return existing["id"]
+        return await self._execute(
+            """INSERT INTO relations
+               (user_id, from_type, from_id, relation_type, to_type, to_id,
+                confidence, source_message_id, data_json)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (user_id, from_type, from_id, relation_type, to_type, to_id,
+             confidence, source_message_id, data_json),
+        )
+
+    async def relations_for_entity(
+        self, user_id: int, entity_type: str, entity_id: int, direction: str = "both"
+    ) -> list:
+        if direction == "out":
+            sql = "SELECT * FROM relations WHERE user_id=? AND from_type=? AND from_id=? ORDER BY created_at"
+            params = (user_id, entity_type, entity_id)
+        elif direction == "in":
+            sql = "SELECT * FROM relations WHERE user_id=? AND to_type=? AND to_id=? ORDER BY created_at"
+            params = (user_id, entity_type, entity_id)
+        else:
+            sql = """SELECT * FROM relations
+                     WHERE user_id=? AND ((from_type=? AND from_id=?) OR (to_type=? AND to_id=?))
+                     ORDER BY created_at"""
+            params = (user_id, entity_type, entity_id, entity_type, entity_id)
+        rows = await self._fetchall(sql, params)
+        for row in rows:
+            row["data"] = json.loads(row.get("data_json") or "{}")
+        return rows
+
+    async def event_create(
+        self,
+        user_id: int,
+        event_type: str,
+        entity_type: str = None,
+        entity_id: int = None,
+        date: str = None,
+        title: str = None,
+        data: dict = None,
+        source_message_id: int = None,
+    ) -> int:
+        return await self._execute(
+            """INSERT INTO events
+               (user_id, entity_type, entity_id, event_type, date, title, data_json, source_message_id)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (
+                user_id, entity_type, entity_id, event_type, date, title,
+                json.dumps(data or {}, ensure_ascii=False), source_message_id,
+            ),
+        )
+
+    async def events_for_entity(
+        self, user_id: int, entity_type: str, entity_id: int, limit: int = 50
+    ) -> list:
+        rows = await self._fetchall(
+            """SELECT * FROM events
+               WHERE user_id=? AND entity_type=? AND entity_id=?
+               ORDER BY date DESC, created_at DESC LIMIT ?""",
+            (user_id, entity_type, entity_id, limit),
+        )
+        for row in rows:
+            row["data"] = json.loads(row.get("data_json") or "{}")
+        return rows
+
+    async def metric_create(
+        self,
+        user_id: int,
+        entity_type: str,
+        entity_id: int,
+        metric_name: str,
+        metric_value: float = None,
+        unit: str = None,
+        date: str = None,
+        source: str = None,
+        data: dict = None,
+    ) -> int:
+        return await self._execute(
+            """INSERT INTO metrics
+               (user_id, entity_type, entity_id, metric_name, metric_value, unit, date, source, data_json)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (
+                user_id, entity_type, entity_id, metric_name, metric_value, unit,
+                date, source, json.dumps(data or {}, ensure_ascii=False),
+            ),
+        )
+
+    async def metrics_for_entity(
+        self,
+        user_id: int,
+        entity_type: str,
+        entity_id: int,
+        metric_name: str = None,
+        date_from: str = None,
+        date_to: str = None,
+        limit: int = 100,
+    ) -> list:
+        sql = "SELECT * FROM metrics WHERE user_id=? AND entity_type=? AND entity_id=?"
+        params: list = [user_id, entity_type, entity_id]
+        if metric_name:
+            sql += " AND metric_name=?"
+            params.append(metric_name)
+        if date_from:
+            sql += " AND (date IS NULL OR date >= ?)"
+            params.append(date_from)
+        if date_to:
+            sql += " AND (date IS NULL OR date <= ?)"
+            params.append(date_to)
+        sql += " ORDER BY date DESC, created_at DESC LIMIT ?"
+        params.append(limit)
+        rows = await self._fetchall(sql, tuple(params))
+        for row in rows:
+            row["data"] = json.loads(row.get("data_json") or "{}")
         return rows
 
     # ===== USERS =====
