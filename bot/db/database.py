@@ -304,6 +304,41 @@ _CREATE_SQL = [
         updated_at TEXT DEFAULT (datetime('now')),
         UNIQUE(user_id, object_type, object_id, google_type)
     )""",
+    # Memory Rules — user-defined rules, preferences, definitions, corrections, strategies
+    """CREATE TABLE IF NOT EXISTS memory_rules (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        memory_type TEXT NOT NULL DEFAULT 'rule',
+        scope_type TEXT NOT NULL DEFAULT 'global',
+        scope_id INTEGER,
+        scope_name TEXT,
+        text TEXT NOT NULL,
+        normalized_key TEXT,
+        extra_json TEXT,
+        confidence REAL DEFAULT 1.0,
+        source_message TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now')),
+        is_active INTEGER DEFAULT 1
+    )""",
+    # Conversation Episodes — episodic long-term memory (Jarvis layer)
+    """CREATE TABLE IF NOT EXISTS conversation_episodes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        date TEXT NOT NULL,
+        title TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        key_points_json TEXT,
+        decisions_json TEXT,
+        people_json TEXT,
+        projects_json TEXT,
+        entities_json TEXT,
+        tasks_json TEXT,
+        rules_json TEXT,
+        source_message_ids_json TEXT,
+        google_doc_url TEXT,
+        created_at TEXT DEFAULT (datetime('now'))
+    )""",
     # Memory V2 — unified brain-index across all sources
     """CREATE TABLE IF NOT EXISTS memory_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -330,6 +365,10 @@ _CREATE_SQL = [
 # Indexes created once during migration (IF NOT EXISTS not supported in CREATE INDEX
 # for all SQLite versions, so we wrap in try/except in db_health_migrate)
 _MEMORY_ITEMS_INDEXES = [
+    "CREATE INDEX IF NOT EXISTS idx_memory_rules_user ON memory_rules(user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_memory_rules_type ON memory_rules(user_id, memory_type)",
+    "CREATE INDEX IF NOT EXISTS idx_memory_rules_scope ON memory_rules(user_id, scope_type, scope_name)",
+    "CREATE INDEX IF NOT EXISTS idx_memory_rules_active ON memory_rules(user_id, is_active)",
     "CREATE INDEX IF NOT EXISTS idx_memory_items_user_id ON memory_items(user_id)",
     "CREATE INDEX IF NOT EXISTS idx_memory_items_category ON memory_items(category)",
     "CREATE INDEX IF NOT EXISTS idx_memory_items_source_type ON memory_items(source_type)",
@@ -345,6 +384,9 @@ _MEMORY_ITEMS_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_events_date ON events(user_id, date)",
     "CREATE INDEX IF NOT EXISTS idx_metrics_entity ON metrics(user_id, entity_type, entity_id)",
     "CREATE INDEX IF NOT EXISTS idx_metrics_date ON metrics(user_id, date)",
+    "CREATE INDEX IF NOT EXISTS idx_episodes_user ON conversation_episodes(user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_episodes_date ON conversation_episodes(user_id, date)",
+    "CREATE INDEX IF NOT EXISTS idx_message_logs_episode ON message_logs(user_id, episode_id)",
 ]
 
 
@@ -391,6 +433,9 @@ class Database:
                 ("last_accessed_at", "TEXT"),
                 ("source_url", "TEXT"),
                 ("source_title", "TEXT"),
+            ],
+            "message_logs": [
+                ("episode_id", "INTEGER"),
             ],
         }
 
@@ -1178,7 +1223,126 @@ class Database:
             (bot_response, actions_json, log_id),
         )
 
-    # ===== ATTACHMENTS =====
+    # ===== CONVERSATION EPISODES =====
+
+    async def episode_create(self, user_id: int, date: str, title: str, summary: str,
+                             key_points: list = None, decisions: list = None,
+                             people: list = None, projects: list = None,
+                             entities: list = None, tasks: list = None,
+                             rules: list = None, source_message_ids: list = None,
+                             google_doc_url: str = None) -> int:
+        return await self._execute(
+            """INSERT INTO conversation_episodes
+               (user_id, date, title, summary, key_points_json, decisions_json,
+                people_json, projects_json, entities_json, tasks_json, rules_json,
+                source_message_ids_json, google_doc_url)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (user_id, date, title, summary,
+             json.dumps(key_points or [], ensure_ascii=False),
+             json.dumps(decisions or [], ensure_ascii=False),
+             json.dumps(people or [], ensure_ascii=False),
+             json.dumps(projects or [], ensure_ascii=False),
+             json.dumps(entities or [], ensure_ascii=False),
+             json.dumps(tasks or [], ensure_ascii=False),
+             json.dumps(rules or [], ensure_ascii=False),
+             json.dumps(source_message_ids or [], ensure_ascii=False),
+             google_doc_url),
+        )
+
+    async def episode_update_doc_url(self, episode_id: int, google_doc_url: str):
+        await self._execute(
+            "UPDATE conversation_episodes SET google_doc_url=? WHERE id=?",
+            (google_doc_url, episode_id),
+        )
+
+    async def episode_get(self, episode_id: int) -> Optional[dict]:
+        row = await self._fetchone(
+            "SELECT * FROM conversation_episodes WHERE id=?", (episode_id,)
+        )
+        if row:
+            for field in ("key_points_json", "decisions_json", "people_json",
+                          "projects_json", "entities_json", "tasks_json",
+                          "rules_json", "source_message_ids_json"):
+                try:
+                    row[field.replace("_json", "")] = json.loads(row[field] or "[]")
+                except Exception:
+                    row[field.replace("_json", "")] = []
+        return row
+
+    async def episode_get_recent(self, user_id: int, limit: int = 5) -> list:
+        rows = await self._fetchall(
+            """SELECT * FROM conversation_episodes WHERE user_id=?
+               ORDER BY date DESC, id DESC LIMIT ?""",
+            (user_id, limit),
+        )
+        for row in rows:
+            for field in ("key_points_json", "decisions_json", "people_json",
+                          "projects_json", "entities_json", "tasks_json",
+                          "rules_json", "source_message_ids_json"):
+                try:
+                    row[field.replace("_json", "")] = json.loads(row[field] or "[]")
+                except Exception:
+                    row[field.replace("_json", "")] = []
+        return rows
+
+    async def episode_search(self, user_id: int, keywords: list, limit: int = 5) -> list:
+        """Search episodes by keywords in title/summary/people.
+
+        Uses both original and capitalized keyword variants to handle
+        case-insensitive Cyrillic matching (SQLite LOWER only handles ASCII).
+        """
+        if not keywords:
+            return []
+        # Build keyword variants: lowercase + title-case (for Cyrillic)
+        kw_variants = []
+        for kw in keywords:
+            kw_variants.append(kw)
+            cap = kw.capitalize()
+            if cap != kw:
+                kw_variants.append(cap)
+
+        conditions = " OR ".join(
+            ["title LIKE ? OR summary LIKE ? OR people_json LIKE ?" for _ in kw_variants]
+        )
+        params = [user_id]
+        for kw in kw_variants:
+            params += [f"%{kw}%", f"%{kw}%", f"%{kw}%"]
+        params.append(limit)
+        rows = await self._fetchall(
+            f"SELECT * FROM conversation_episodes WHERE user_id=? AND ({conditions})"
+            f" ORDER BY date DESC, id DESC LIMIT ?",
+            tuple(params),
+        )
+        for row in rows:
+            for field in ("key_points_json", "decisions_json", "people_json",
+                          "projects_json", "entities_json", "tasks_json",
+                          "rules_json", "source_message_ids_json"):
+                try:
+                    row[field.replace("_json", "")] = json.loads(row[field] or "[]")
+                except Exception:
+                    row[field.replace("_json", "")] = []
+        return rows
+
+    async def message_logs_unsummarized(self, user_id: int, limit: int = 30) -> list:
+        """Return messages not yet linked to any episode (episode_id IS NULL)."""
+        return await self._fetchall(
+            """SELECT id, message_type, original_text, bot_response, created_at
+               FROM message_logs
+               WHERE user_id=? AND (episode_id IS NULL)
+               AND original_text IS NOT NULL AND original_text != ''
+               ORDER BY created_at ASC, id ASC LIMIT ?""",
+            (user_id, limit),
+        )
+
+    async def message_logs_mark_episode(self, log_ids: list, episode_id: int):
+        """Link a list of message_log IDs to an episode."""
+        if not log_ids:
+            return
+        placeholders = ",".join("?" * len(log_ids))
+        await self._execute(
+            f"UPDATE message_logs SET episode_id=? WHERE id IN ({placeholders})",
+            tuple([episode_id] + log_ids),
+        )
 
     async def attachment_save(self, user_id: int, file_type: str, file_id: str,
                               local_path: str = None, caption: str = None,
@@ -1619,6 +1783,149 @@ class Database:
                ON CONFLICT(user_id, key) DO UPDATE SET value=excluded.value""",
             (user_id, "google_spreadsheet_id", spreadsheet_id),
         )
+
+    # ===== MEMORY RULES =====
+
+    async def rule_create(
+        self,
+        user_id: int,
+        memory_type: str,
+        text: str,
+        scope_type: str = "global",
+        scope_id: int = None,
+        scope_name: str = None,
+        normalized_key: str = None,
+        extra_json: str = None,
+        confidence: float = 1.0,
+        source_message: str = None,
+    ) -> int:
+        """Insert a new memory rule. Returns the new row id."""
+        return await self._execute(
+            """INSERT INTO memory_rules
+               (user_id, memory_type, scope_type, scope_id, scope_name, text,
+                normalized_key, extra_json, confidence, source_message)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (user_id, memory_type, scope_type, scope_id, scope_name, text,
+             normalized_key, extra_json, confidence, source_message),
+        )
+
+    async def rule_list(
+        self,
+        user_id: int,
+        memory_type: str = None,
+        scope_type: str = None,
+        scope_name: str = None,
+        is_active: bool = True,
+        limit: int = 50,
+    ) -> list:
+        """Return rules filtered by type/scope, active by default."""
+        sql = "SELECT * FROM memory_rules WHERE user_id=?"
+        params: list = [user_id]
+        if memory_type:
+            sql += " AND memory_type=?"
+            params.append(memory_type)
+        if scope_type:
+            sql += " AND scope_type=?"
+            params.append(scope_type)
+        if scope_name is not None:
+            sql += " AND scope_name=?"
+            params.append(scope_name)
+        if is_active is not None:
+            sql += " AND is_active=?"
+            params.append(1 if is_active else 0)
+        sql += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        rows = await self._fetchall(sql, tuple(params))
+        for row in rows:
+            if row.get("extra_json"):
+                try:
+                    row["extra"] = json.loads(row["extra_json"])
+                except Exception:
+                    row["extra"] = {}
+            else:
+                row["extra"] = {}
+        return rows
+
+    async def rule_search(
+        self,
+        user_id: int,
+        keywords: list = None,
+        scope_candidates: list = None,
+        limit: int = 10,
+    ) -> list:
+        """Return active rules matching by scope OR keywords.
+
+        Always includes global rules. Scope candidates are searched by scope_name.
+        Keywords match against text and normalized_key columns.
+        Results ordered by confidence DESC, created_at DESC.
+        """
+        conditions = ["user_id=?", "is_active=1"]
+        params: list = [user_id]
+
+        # Relevance filter: global OR scoped to candidates OR keyword-matching
+        relevance_parts = ["scope_type='global'"]
+        if scope_candidates:
+            for sc in scope_candidates:
+                relevance_parts.append("scope_name=?")
+                params.append(sc)
+        if keywords:
+            for kw in keywords[:10]:
+                like = f"%{kw}%"
+                relevance_parts.append("text LIKE ?")
+                params.append(like)
+                relevance_parts.append("normalized_key LIKE ?")
+                params.append(like)
+
+        conditions.append("(" + " OR ".join(relevance_parts) + ")")
+
+        sql = (
+            "SELECT * FROM memory_rules WHERE "
+            + " AND ".join(conditions)
+            + " ORDER BY confidence DESC, created_at DESC LIMIT ?"
+        )
+        params.append(limit)
+        rows = await self._fetchall(sql, tuple(params))
+        for row in rows:
+            if row.get("extra_json"):
+                try:
+                    row["extra"] = json.loads(row["extra_json"])
+                except Exception:
+                    row["extra"] = {}
+            else:
+                row["extra"] = {}
+        return rows
+
+    async def rule_deactivate(self, user_id: int, rule_id: int) -> bool:
+        """Soft-delete: set is_active=0. Never deletes data."""
+        rows = await self._fetchall(
+            "SELECT id FROM memory_rules WHERE user_id=? AND id=?",
+            (user_id, rule_id),
+        )
+        if rows:
+            await self._execute(
+                "UPDATE memory_rules SET is_active=0, updated_at=datetime('now') WHERE id=?",
+                (rule_id,),
+            )
+            return True
+        return False
+
+    async def rule_get_definitions(self, user_id: int) -> list:
+        """Return all active definition rules for a user (for ingestion expansion)."""
+        rows = await self._fetchall(
+            """SELECT * FROM memory_rules
+               WHERE user_id=? AND memory_type='definition' AND is_active=1
+               ORDER BY created_at DESC""",
+            (user_id,),
+        )
+        for row in rows:
+            if row.get("extra_json"):
+                try:
+                    row["extra"] = json.loads(row["extra_json"])
+                except Exception:
+                    row["extra"] = {}
+            else:
+                row["extra"] = {}
+        return rows
 
 
 db = Database()

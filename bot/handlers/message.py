@@ -363,6 +363,31 @@ async def _process_text(message: Message, text: str, state: FSMContext,
         user_id, message_type, text, transcription=transcription
     )
 
+    # ── Memory/Rule detection (before OpenAI — fast regex, no cost) ───────────
+    try:
+        from bot.modules.memory_rules import is_memory_message, save_memory_rule, process_correction, build_memory_feedback
+        if is_memory_message(text):
+            # Detect correction vs. general rule/preference/definition
+            from bot.modules.memory_rules import _classify_memory_type
+            detected_type = _classify_memory_type(text)
+            if detected_type == "correction":
+                rule_result = await process_correction(
+                    text=text, user_id=user_id, source_message_id=log_id,
+                )
+            else:
+                rule_result = await save_memory_rule(
+                    user_id=user_id, text=text, source_message=text, sync_google=True,
+                )
+            feedback = build_memory_feedback(rule_result)
+            try:
+                await message.answer(feedback, parse_mode="Markdown")
+            except Exception:
+                await message.answer(feedback)
+            await db.log_update_response(log_id, feedback)
+            return  # skip normal intent pipeline
+    except Exception:
+        logging.exception("memory_rules hook failed — falling through to normal flow")
+
     try:
         result = await classify(text, user_id=user_id)
         actions = result.get("actions", [])
@@ -497,7 +522,42 @@ async def _process_text(message: Message, text: str, state: FSMContext,
 
     # Auto-extract personal facts from the message (fire-and-forget, no await blocking)
     try:
-        from bot.modules.auto_memory import auto_extract_memory
-        await auto_extract_memory(user_id, text, log_id=log_id)
+        from bot.modules.auto_memory import auto_extract_memory, auto_extract_memory_ai
+        regex_saved = await auto_extract_memory(user_id, text, log_id=log_id)
+        # If router flagged memory_update_needed but regex found nothing → AI extraction
+        if memory_update_needed and not regex_saved:
+            import asyncio as _asyncio
+            _asyncio.create_task(auto_extract_memory_ai(user_id, text))
+    except Exception:
+        pass  # never block the main flow
+
+    # Business Graph ingestion (fire-and-forget, non-blocking)
+    # Triggered only when text contains business/marketing signals.
+    try:
+        from bot.modules.business_graph import is_business_message, ingest_business_text
+        if is_business_message(text):
+            import asyncio as _asyncio
+            import pytz as _pytz
+            _tz = _pytz.timezone(config.TIMEZONE)
+            from datetime import datetime as _dt, timedelta as _td
+            _now = _dt.now(_tz)
+            _asyncio.create_task(ingest_business_text(
+                text=text,
+                user_id=user_id,
+                date_today=_now.strftime("%Y-%m-%d"),
+                date_tomorrow=(_now + _td(days=1)).strftime("%Y-%m-%d"),
+                source="message",
+                source_message_id=log_id,
+                sync_google=True,
+            ))
+    except Exception:
+        pass  # never block the main flow
+
+    # Episodic memory: auto-summarize conversation when enough messages accumulate
+    # (fire-and-forget — runs in background after each message, no-op if not enough content)
+    try:
+        from bot.modules.auto_summarizer import maybe_summarize_conversation
+        import asyncio as _asyncio
+        _asyncio.create_task(maybe_summarize_conversation(user_id))
     except Exception:
         pass  # never block the main flow

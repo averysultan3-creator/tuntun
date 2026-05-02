@@ -15,7 +15,7 @@ TELEGRAM_BOT_TOKEN=твой_токен_от_BotFather
 OPENAI_API_KEY=твой_openai_ключ
 OPENAI_MODEL=gpt-4o
 TIMEZONE=Europe/Warsaw
-DATABASE_PATH=tuntun.db
+DATABASE_PATH=storage/tuntun.db
 ```
 
 > **Важно:** Никогда не публикуй `.env`. Он добавлен в `.gitignore`.

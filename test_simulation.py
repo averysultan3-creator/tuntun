@@ -302,9 +302,10 @@ async def main():
         await teardown_db()
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
 
-total_line = f"{'='*54}\n  Results: {PASS} PASS / {FAIL} FAIL  (total {TOTAL})\n{'='*54}"
-print(f"\n{total_line}\n")
-if FAIL > 0:
-    sys.exit(1)
+    total_line = f"{'='*54}\n  Results: {PASS} PASS / {FAIL} FAIL  (total {TOTAL})\n{'='*54}"
+    print(f"\n{total_line}\n")
+    if FAIL > 0:
+        sys.exit(1)

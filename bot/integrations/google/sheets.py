@@ -47,6 +47,8 @@ _SHEET_HEADERS: dict[str, list[str]] = {
     "MemoryIndex": ["date", "id", "source_type", "source_id", "category", "summary", "tags", "google_link"],
     "DynamicRecords": ["date", "local_id", "section_name", "data_json",
                        "summary", "created_at"],
+    "ConversationEpisodes": ["date", "id", "title", "summary", "decisions",
+                              "people", "projects", "tasks", "google_doc_url"],
 }
 
 

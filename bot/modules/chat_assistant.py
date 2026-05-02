@@ -151,7 +151,29 @@ async def handle_chat_response(
     caps_text = _build_capabilities_text()
     context_state = await _get_conversation_state_block(user_id)
 
-    system_parts = [_IDENTITY, "", caps_text]
+    # Personalize identity block: add user name and reply style
+    identity = _IDENTITY
+    try:
+        user_row = await db._fetchone(
+            "SELECT first_name FROM users WHERE user_id=?", (user_id,)
+        )
+        if user_row and user_row.get("first_name"):
+            identity = _IDENTITY + f"\n\nПользователя зовут {user_row['first_name']}. Обращайся по имени когда уместно."
+    except Exception:
+        pass
+
+    # Apply reply_style from user settings into the system prompt directly,
+    # so the AI generates the right length from the start (not post-processing).
+    try:
+        _reply_style = await db.setting_get(user_id, "reply_style") or "normal"
+        if _reply_style == "short":
+            identity += "\n\nСТИЛЬ: отвечай КРАТКО — 1-3 предложения, без воды и пояснений."
+        elif _reply_style == "detailed":
+            identity += "\n\nСТИЛЬ: отвечай ПОДРОБНО — развёрнуто, с пояснениями, примерами и деталями."
+    except Exception:
+        pass
+
+    system_parts = [identity, "", caps_text]
 
     if context_state:
         system_parts.append("\n--- Активный контекст ---\n" + context_state)
@@ -215,6 +237,26 @@ async def handle_chat_response(
                 context_parts.append(old_ctx)
         except Exception as _rce:
             logging.warning("handle_chat_response: retrieve_context fallback error: %s", _rce)
+
+    # ── 2c. Episode context (Jarvis layer) ───────────────────────────────
+    # Inject relevant conversation episodes when user asks about history,
+    # previous discussions, people, or decisions.
+    _is_episode_query = _is_memory_query(question) or any(
+        m in question.lower() for m in (
+            "о чём мы говорили", "о чём говорили", "что мы решили",
+            "что решали", "что обсуждали", "в прошлый раз",
+            "найди где", "обсуждали", "где мы говорили", "прошлые разговоры",
+            "предыдущие разговоры", "эпизод", "разговор про", "что важно",
+        )
+    )
+    if _is_episode_query or _needs_brain_ctx:
+        try:
+            from bot.modules.auto_summarizer import get_episode_context
+            ep_ctx = await get_episode_context(user_id, question, limit=2)
+            if ep_ctx:
+                context_parts.append(ep_ctx)
+        except Exception as _epe:
+            logging.warning("handle_chat_response: episode context error: %s", _epe)
 
     if context_parts:
         system_parts.append("\n--- Данные пользователя ---\n" + "\n".join(context_parts))
@@ -351,7 +393,18 @@ async def get_user_context(user_id: int, query: str = None) -> str:
             s_str = ", ".join("{}={}".format(s["key"], s["value"]) for s in settings)
             parts.append("Настройки: " + s_str)
 
-        # ── 6. Query-driven retrieval ─────────────────────────────────────
+        # ── 6. Personal memory facts ──────────────────────────────────────
+        # Always include stored preferences, habits, and personal facts so the
+        # bot knows the user even during general (non-data-query) conversations.
+        all_memories = await db.memory_recall(user_id)
+        if all_memories:
+            m_items = "; ".join(
+                "[{}] {}".format(m["category"], str(m["value"])[:100])
+                for m in all_memories[:15]
+            )
+            parts.append("Что знаю о пользователе: " + m_items)
+
+        # ── 7. Query-driven retrieval ─────────────────────────────────────
         if query:
             relevant = await retrieve_context(user_id, query, max_chars=1600)
             if relevant:

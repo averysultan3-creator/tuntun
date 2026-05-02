@@ -13,6 +13,11 @@ Supported object types / targets:
     relation    → Relations sheet
     event       → Events sheet
     metric      → Metrics sheet
+    campaign    → Campaigns sheet
+    creative    → Creatives sheet
+    order       → Orders sheet
+    ads         → Ads sheet
+    memory_rule → MemoryIndex sheet
     long_note   → LongNotes sheet + Google Doc
     attachment  → Attachments sheet + Google Drive
     backup      → Google Drive
@@ -298,6 +303,7 @@ async def sync_dynamic_record(user_id: int, record_id: int, payload: dict) -> bo
     sid = await _get_spreadsheet(user_id)
     if not sid:
         return False
+    from bot.integrations.google.sheets import append_row
     import json as _json
     section_name = payload.get("section_name", "")
     data = payload.get("data") or {}
@@ -321,19 +327,43 @@ async def sync_campaign(user_id: int, campaign_id: int, payload: dict) -> bool:
     sid = await _get_spreadsheet(user_id)
     if not sid:
         return False
+    from bot.integrations.google.sheets import append_row
     row = [
         date.today().strftime("%Y-%m-%d"),
         str(campaign_id),
+        payload.get("project_id", ""),
         payload.get("name", ""),
         payload.get("platform", ""),
-        str(payload.get("budget_usd") or payload.get("budget") or ""),
+        payload.get("launch_date", payload.get("date_start", "")),
         payload.get("status", "active"),
-        payload.get("date_start", ""),
-        payload.get("date_end", ""),
+        str(payload.get("budget_usd") or payload.get("budget_amount") or payload.get("budget") or ""),
+        payload.get("budget_currency", "USD"),
         payload.get("notes", ""),
     ]
     result = await append_row(sid, "Campaigns", row, user_id=user_id,
                                object_type="campaign", object_id=campaign_id)
+    return result is not None
+
+
+async def sync_creative(user_id: int, creative_id: int, payload: dict) -> bool:
+    """Sync a creative to Creatives sheet."""
+    sid = await _get_spreadsheet(user_id)
+    if not sid:
+        return False
+    from bot.integrations.google.sheets import append_row
+    # Creatives headers: date, id, campaign_id, name, format, status, asset_link, notes
+    row = [
+        date.today().strftime("%Y-%m-%d"),
+        str(creative_id),
+        str(payload.get("campaign_id", "")),
+        payload.get("name", ""),
+        payload.get("format", ""),
+        payload.get("status", "active"),
+        payload.get("asset_link", ""),
+        payload.get("notes", ""),
+    ]
+    result = await append_row(sid, "Creatives", row, user_id=user_id,
+                               object_type="creative", object_id=creative_id)
     return result is not None
 
 
@@ -342,17 +372,40 @@ async def sync_order(user_id: int, order_id: int, payload: dict) -> bool:
     sid = await _get_spreadsheet(user_id)
     if not sid:
         return False
+    from bot.integrations.google.sheets import append_row
     row = [
         payload.get("date") or date.today().strftime("%Y-%m-%d"),
         str(order_id),
-        payload.get("source_campaign", ""),
-        str(payload.get("amount_usd") or ""),
-        str(payload.get("quantity") or ""),
+        str(payload.get("project_id", "")),
+        str(payload.get("campaign_id") or payload.get("source_campaign") or ""),
+        str(payload.get("amount") or payload.get("amount_usd") or ""),
+        payload.get("currency", "USD"),
         payload.get("status", "new"),
+        payload.get("customer", ""),
         payload.get("notes", ""),
     ]
     result = await append_row(sid, "Orders", row, user_id=user_id,
                                object_type="order", object_id=order_id)
+    return result is not None
+
+
+async def sync_ads(user_id: int, ad_id: int, payload: dict) -> bool:
+    """Sync an ad/account status row to Ads sheet."""
+    sid = await _get_spreadsheet(user_id)
+    if not sid:
+        return False
+    from bot.integrations.google.sheets import append_row
+    row = [
+        payload.get("date") or date.today().strftime("%Y-%m-%d"),
+        str(ad_id),
+        payload.get("platform", ""),
+        payload.get("account", ""),
+        str(payload.get("project_id", "")),
+        payload.get("status", "active"),
+        payload.get("notes", ""),
+    ]
+    result = await append_row(sid, "Ads", row, user_id=user_id,
+                               object_type="ads", object_id=ad_id)
     return result is not None
 
 
@@ -376,6 +429,70 @@ async def sync_memory_index(user_id: int, item_id: int, payload: dict) -> bool:
     return result is not None
 
 
+async def sync_episode(user_id: int, episode_id: int, payload: dict) -> bool:
+    """Sync a conversation episode to ConversationEpisodes sheet."""
+    sid = await _get_spreadsheet(user_id)
+    if not sid:
+        return False
+    from bot.integrations.google.sheets import append_row
+    import json as _json
+
+    # Format list fields as semicolon-separated strings
+    def _fmt(val):
+        if isinstance(val, list):
+            return "; ".join(str(x) for x in val if x)
+        return str(val) if val else ""
+
+    people = payload.get("people") or []
+    people_str = "; ".join(
+        p.get("name", "") if isinstance(p, dict) else str(p)
+        for p in people if p
+    )
+
+    row = [
+        payload.get("date") or date.today().strftime("%Y-%m-%d"),
+        str(episode_id),
+        payload.get("title", ""),
+        payload.get("summary", "")[:500],
+        _fmt(payload.get("decisions")),
+        people_str,
+        _fmt(payload.get("projects")),
+        _fmt(payload.get("tasks")),
+        payload.get("google_doc_url") or "",
+    ]
+    result = await append_row(sid, "ConversationEpisodes", row, user_id=user_id,
+                               object_type="episode", object_id=episode_id)
+    return result is not None
+
+
+async def sync_memory_rule(user_id: int, rule_id: int, payload: dict) -> bool:
+    """Sync a memory_rule to MemoryIndex sheet.
+
+    Uses the same MemoryIndex sheet with source_type='memory_rule'.
+    MemoryIndex columns: date, id, source_type, source_id, category, summary, tags, google_link
+    """
+    sid = await _get_spreadsheet(user_id)
+    if not sid:
+        return False
+    from bot.integrations.google.sheets import append_row
+    scope = payload.get("scope_type", "global")
+    scope_name = payload.get("scope_name", "")
+    scope_tag = f"{scope}:{scope_name}" if scope_name else scope
+    row = [
+        date.today().strftime("%Y-%m-%d"),
+        str(rule_id),
+        "memory_rule",
+        str(rule_id),
+        payload.get("memory_type", "rule"),
+        payload.get("text", ""),
+        f"{scope_tag} {payload.get('normalized_key', '')}".strip(),
+        "",  # no google_link for rules
+    ]
+    result = await append_row(sid, "MemoryIndex", row, user_id=user_id,
+                               object_type="memory_rule", object_id=rule_id)
+    return result is not None
+
+
 # ── Dispatcher ────────────────────────────────────────────────────────────────
 
 _SYNC_HANDLERS = {
@@ -392,8 +509,13 @@ _SYNC_HANDLERS = {
     "dynamic_record": sync_dynamic_record,
     "dynamic":        sync_dynamic_record,
     "campaign":       sync_campaign,
+    "creative":       sync_creative,
     "order":          sync_order,
+    "ads":            sync_ads,
+    "ad":             sync_ads,
     "memory_index":   sync_memory_index,
+    "memory_rule":    sync_memory_rule,
+    "episode":        sync_episode,
 }
 
 
@@ -404,6 +526,15 @@ async def sync_object_to_google(user_id: int, object_type: str, object_id: int,
     Returns True if sync succeeded immediately.
     """
     if not is_google_enabled():
+        try:
+            import config
+            if getattr(config, "GOOGLE_ENABLED", False):
+                await _enqueue(user_id, object_type, object_id, target, "create", payload)
+        except Exception as e:
+            logging.warning(
+                "google_sync: unavailable for %s#%s user=%s and queue failed: %s",
+                object_type, object_id, user_id, e
+            )
         return False
 
     try:

@@ -11,8 +11,10 @@ Rules:
   - Dedup: if a very similar memory already exists (same category + similar
     value), update it instead of inserting a duplicate.
 
-Extraction is purely rule-based (pattern matching) — no extra AI call.
-For V2: could call a lightweight classifier for better accuracy.
+Extraction:
+  - Pattern-based (fast, no AI call) — covers common phrases.
+  - AI-based fallback via auto_extract_memory_ai() — called when the router
+    flagged memory_update_needed=True but regex found nothing.
 """
 import re
 import logging
@@ -39,12 +41,34 @@ _SAVE_PATTERNS = [
     # rules for the bot
     (r"отвечай\s+((?:короче|подробнее|кратко|развернуто).+)", "bot_style"),
     (r"(?:не|без)\s+воды[,\s].+", "bot_style"),
-    # personal facts
+    # personal facts — extended
     (r"мой\s+проект\s+([\w\s]+)", "project"),
     (r"я\s+живу\s+в\s+(.+)", "location"),
+    (r"я\s+из\s+(.+)", "location"),
     (r"мой\s+часовой\s+пояс\s+(.+)", "timezone"),
     (r"встаю\s+в\s+([\d:]+)", "wake_time"),
     (r"ложусь\s+в\s+([\d:]+)", "sleep_time"),
+    # work / occupation
+    (r"я\s+работаю\s+(?:в|на|как)\s+(.+)", "work"),
+    (r"моя\s+профессия\s+(.+)", "work"),
+    (r"я\s+(?:программист|дизайнер|менеджер|маркетолог|фрилансер|студент|врач|учитель)\b.*", "work"),
+    # relationships / personal info
+    (r"меня\s+зовут\s+(.+)", "name"),
+    (r"мое\s+имя\s+(.+)", "name"),
+    (r"моё\s+имя\s+(.+)", "name"),
+    (r"у\s+меня\s+есть\s+([\w\s]+)", "personal_info"),
+    (r"мой\s+партнер\s+(.+)", "relationship"),
+    (r"моя\s+девушка\s+(.+)", "relationship"),
+    (r"мой\s+парень\s+(.+)", "relationship"),
+    (r"моя\s+жена\s+(.+)", "relationship"),
+    (r"мой\s+муж\s+(.+)", "relationship"),
+    # goals / focus
+    (r"моя\s+цель\s+(.+)", "goal"),
+    (r"хочу\s+достичь\s+(.+)", "goal"),
+    (r"я\s+занимаюсь\s+(.+)", "activity"),
+    # languages
+    (r"я\s+знаю\s+([\w\s]+)\s+(?:язык|языки)", "language"),
+    (r"говорю\s+на\s+([\w\s]+)", "language"),
 ]
 
 # Patterns that mean "this is a command/action, not a fact to save"
@@ -124,4 +148,87 @@ async def auto_extract_memory(user_id: int, message_text: str, log_id: int = Non
 
     except Exception as e:
         logging.warning("auto_memory error (user=%s): %s", user_id, e)
+        return False
+
+
+_AI_EXTRACT_PROMPT = """Твоя задача — определить, содержит ли сообщение пользователя долгосрочный личный факт, который стоит запомнить.
+
+Долгосрочные факты: имя, место проживания, работа, профессия, предпочтения, привычки, отношения, цели, хобби, стиль жизни.
+НЕ сохранять: вопросы, команды боту, разовые действия, расходы, задачи.
+
+Если факт найден, верни JSON:
+{"found": true, "category": "habit|preference|dislike|like|work|location|goal|relationship|activity|personal_info|name", "key_name": "краткое_имя_ключа_без_пробелов", "value": "точная формулировка факта на русском"}
+
+Если факта нет:
+{"found": false}
+
+Верни ТОЛЬКО JSON, без пояснений."""
+
+
+async def auto_extract_memory_ai(user_id: int, message_text: str) -> bool:
+    """AI-based memory extraction — called when router flagged memory_update_needed=True
+    but regex extraction found nothing.
+
+    Uses gpt-4o-mini (cheap, fast) to detect personal facts.
+    Returns True if a fact was saved.
+    """
+    if _should_skip(message_text):
+        return False
+
+    # Skip if regex already found something (avoid double work)
+    if _try_extract(message_text):
+        return False
+
+    try:
+        import config as _cfg
+        from openai import AsyncOpenAI
+        _client = AsyncOpenAI(api_key=_cfg.OPENAI_API_KEY)
+
+        resp = await _client.chat.completions.create(
+            model=_cfg.MODEL_ROUTER,  # cheapest model
+            messages=[
+                {"role": "system", "content": _AI_EXTRACT_PROMPT},
+                {"role": "user", "content": message_text[:500]},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.0,
+            max_completion_tokens=150,
+        )
+        import json
+        raw = json.loads(resp.choices[0].message.content)
+
+        if not raw.get("found"):
+            return False
+
+        category = str(raw.get("category", "general"))
+        key_name = str(raw.get("key_name", ""))[:30] or None
+        value = str(raw.get("value", "")).strip()
+
+        if not value or len(value) < 3:
+            return False
+
+        # Dedup check
+        existing = await db.memory_recall(user_id, category=category)
+        for mem in existing:
+            existing_val = str(mem.get("value") or "").lower()
+            new_val = value.lower()
+            ev_words = set(existing_val.split())
+            nv_words = set(new_val.split())
+            if nv_words and len(ev_words & nv_words) / max(len(nv_words), 1) >= 0.6:
+                logging.debug("auto_memory_ai: duplicate skipped (user=%s)", user_id)
+                return False
+
+        await db.memory_save(
+            user_id=user_id,
+            category=category,
+            value=value,
+            key_name=key_name,
+        )
+        logging.info(
+            "auto_memory_ai: saved [%s] '%s' for user %s", category, value[:60], user_id
+        )
+        return True
+
+    except Exception as e:
+        logging.warning("auto_memory_ai error (user=%s): %s", user_id, e)
         return False

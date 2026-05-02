@@ -375,8 +375,9 @@ def test_ingest_all_sheets_aggregates(monkeypatch, tmp_path):
         report = await ingestion_mod.ingest_all_sheets(
             user_id=1, spreadsheet_id="s_all"
         )
-        # 5 important sheets, 1 row each → 5 indexed
-        assert report["indexed"] == 5
+        # 1 row per sheet — indexed count should equal number of sheets processed
+        from bot.integrations.google.ingestion import _IMPORTANT_SHEETS
+        assert report["indexed"] == len(_IMPORTANT_SHEETS)
         assert report["errors"] == 0
 
     asyncio.run(run())

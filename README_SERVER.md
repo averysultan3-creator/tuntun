@@ -41,7 +41,8 @@
 
 ```
 TUNTUN/
-├── SERVER_INSTALL_AND_RUN.bat   ← Главный установщик (запускать первым)
+├── DEPLOY_CONFIGURED.bat         ← Главный установщик с ключами (запускать первым)
+├── SETUP.bat                      ← Установщик без ключей (запрашивает интерактивно)
 ├── start.bat                    ← Запустить бота
 ├── stop.bat                     ← Остановить бота
 ├── restart.bat                  ← Перезапустить бота
@@ -79,7 +80,8 @@ TUNTUN/
 
 ### Шаг 2 — Запусти установщик
 
-Дважды кликни на `SERVER_INSTALL_AND_RUN.bat`.
+Дважды кликни на `DEPLOY_CONFIGURED.bat` (если ключи уже вписаны).
+Или запусти `SETUP.bat` — он попросит ввести токены интерактивно.
 
 Установщик автоматически:
 - Найдёт Python и создаст виртуальное окружение `.venv`
@@ -101,7 +103,7 @@ OPENAI_API_KEY=      ← ключ с platform.openai.com
 ADMIN_TELEGRAM_IDS=  ← твой Telegram user ID (число)
 ```
 
-Сохрани файл и **повторно запусти** `SERVER_INSTALL_AND_RUN.bat`.
+Сохрани файл и **повторно запусти** `SETUP.bat`.
 
 ---
 
@@ -139,7 +141,7 @@ OPENAI_MODEL_VISION=                  # Для анализа фото (пуст
 OPENAI_TRANSCRIBE_MODEL=whisper-1
 
 # === База данных ===
-DATABASE_PATH=tuntun.db
+DATABASE_PATH=storage/tuntun.db
 
 # === Временная зона ===
 TIMEZONE=Europe/Warsaw
@@ -283,7 +285,7 @@ start.bat
 ```
 stop.bat
 del tuntun.db
-SERVER_INSTALL_AND_RUN.bat
+SETUP.bat
 ```
 > ⚠️ Удаление `tuntun.db` сотрёт все данные пользователей. Предварительно сделай копию.
 

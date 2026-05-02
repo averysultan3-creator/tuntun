@@ -17,12 +17,20 @@ import os
 import asyncio
 import json
 import logging
+import tempfile
 from unittest.mock import AsyncMock, patch, MagicMock, call
 
 sys.path.insert(0, ".")
 logging.disable(logging.CRITICAL)
 
-os.environ.setdefault("DATABASE_PATH", "test_cost.db")
+TEST_DB_PATH = os.path.join(tempfile.gettempdir(), "tuntun_test_cost.db")
+for suffix in ("", "-journal", "-wal", "-shm"):
+    try:
+        os.remove(TEST_DB_PATH + suffix)
+    except FileNotFoundError:
+        pass
+
+os.environ["DATABASE_PATH"] = TEST_DB_PATH
 os.environ.setdefault("OPENAI_API_KEY", "sk-test-placeholder")
 
 PASS = 0
@@ -49,7 +57,7 @@ def fail(name, detail=""):
 from bot.db.database import Database
 import bot.db.database as db_module
 
-_test_db = Database("test_cost.db")
+_test_db = Database(TEST_DB_PATH)
 USER_ID = 77
 
 
@@ -296,16 +304,19 @@ async def run_all():
         ok(f"get_model_{purpose}_not_empty", m)
 
     # ── Cleanup
-    if os.path.exists("test_cost.db"):
-        os.remove("test_cost.db")
+    for suffix in ("", "-journal", "-wal", "-shm"):
+        path = TEST_DB_PATH + suffix
+        if os.path.exists(path):
+            os.remove(path)
 
 
-asyncio.run(run_all())
+if __name__ == "__main__":
+    asyncio.run(run_all())
 
-total = PASS + FAIL
-print(f"\n{'=' * 58}")
-print(f"  Results: {PASS} PASS / {FAIL} FAIL  (total {total})")
-print(f"{'=' * 58}\n")
+    total = PASS + FAIL
+    print(f"\n{'=' * 58}")
+    print(f"  Results: {PASS} PASS / {FAIL} FAIL  (total {total})")
+    print(f"{'=' * 58}\n")
 
-if FAIL > 0:
-    sys.exit(1)
+    if FAIL > 0:
+        sys.exit(1)

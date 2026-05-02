@@ -487,16 +487,16 @@ async def run_async_tests():
         os.remove("test_stability.db")
 
 
-asyncio.run(run_async_tests())
+if __name__ == "__main__":
+    asyncio.run(run_async_tests())
 
+    # ─────────────────────────────────────────────────────────────
+    # Final summary
+    # ─────────────────────────────────────────────────────────────
+    total = PASS + FAIL + WARN
+    print(f"\n{'=' * 60}")
+    print(f"  Results: {PASS} PASS / {FAIL} FAIL / {WARN} WARN  (total {total})")
+    print(f"{'=' * 60}\n")
 
-# ─────────────────────────────────────────────────────────────
-# Final summary
-# ─────────────────────────────────────────────────────────────
-total = PASS + FAIL + WARN
-print(f"\n{'=' * 60}")
-print(f"  Results: {PASS} PASS / {FAIL} FAIL / {WARN} WARN  (total {total})")
-print(f"{'=' * 60}\n")
-
-if FAIL > 0:
-    sys.exit(1)
+    if FAIL > 0:
+        sys.exit(1)

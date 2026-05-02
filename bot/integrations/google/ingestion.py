@@ -206,7 +206,23 @@ async def ingest_drive_file(
 # 4. Convenience: ingest all important sheets for a user
 # ──────────────────────────────────────────────────────────────────────────────
 
-_IMPORTANT_SHEETS = ["Finance", "Memory", "Tasks", "Ideas", "LongNotes"]
+_IMPORTANT_SHEETS = [
+    "Finance",
+    "Memory",
+    "Tasks",
+    "Ideas",
+    "LongNotes",
+    "Projects",
+    "Entities",
+    "Relations",
+    "Events",
+    "Metrics",
+    "Campaigns",
+    "Creatives",
+    "Orders",
+    "Ads",
+    "MemoryIndex",
+]
 
 
 async def ingest_all_sheets(user_id: int, spreadsheet_id: str) -> dict:
