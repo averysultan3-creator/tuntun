@@ -57,3 +57,7 @@ test_libs/
 *.zip
 *.xlsx
 *.log
+
+# Accidental deploy clone
+TUNTUN/
+tuntun_live_test.db
